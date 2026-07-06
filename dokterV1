@@ -1,5 +1,5 @@
 -- ==========================================
--- ANTI DOUBLE EXECUTE & CLEANUP
+-- ANTI DOUBLE EXECUTE & CLEANUP tanpa delay minus di orang pingsan belum ada solusi lupa ambil path
 -- ==========================================
 if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end
 if _G.AutoDoctor_Loop then task.cancel(_G.AutoDoctor_Loop) end
@@ -12,7 +12,9 @@ local Config = {
     MaxRooms = 5,             
     WaitTime = 0.5,           
     MaxInventory = 3,         
-    ScanDelay = 5
+    ScanDelay = 5,
+    -- TITIK IDLE BARU SESUAI REQUEST
+    IdleCFrame = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967)
 }
 
 local RoomCFrames = {
@@ -76,7 +78,7 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "Auto Doctor v15"
+TitleText.Text = "Auto Doctor v18"
 TitleText.TextColor3 = Color3.fromRGB(0, 255, 150)
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 14
@@ -113,7 +115,7 @@ local StatusLabel = Instance.new("TextLabel")
 StatusLabel.Size = UDim2.new(1, -20, 0, 20)
 StatusLabel.Position = UDim2.new(0, 10, 0, 5)
 StatusLabel.BackgroundTransparency = 1
-StatusLabel.Text = "Status: Idle"
+StatusLabel.Text = "Status: Menunggu..."
 StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
 StatusLabel.Font = Enum.Font.GothamSemibold
 StatusLabel.TextSize = 12
@@ -153,11 +155,23 @@ local function setStatus(text)
     end
 end
 
+-- Teleport ke Ruang Medis
 local function teleportToSafeRoom(roomNum)
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if root and RoomCFrames[roomNum] then
         root.CFrame = RoomCFrames[roomNum]
+        root.Velocity = Vector3.zero
+        task.wait(Config.WaitTime)
+    end
+end
+
+-- Teleport ke Posisi Idle (Lobby)
+local function teleportToIdle()
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = Config.IdleCFrame
         root.Velocity = Vector3.zero
         task.wait(Config.WaitTime)
     end
@@ -337,6 +351,54 @@ local function findActiveRoom()
     return nil
 end
 
+local function handleFaintedPatientsIfAny()
+    local faintedNPC, carryPP = nil, nil
+    
+    for _, npc in ipairs(workspace.NPCs:GetChildren()) do
+        local pp = npc:FindFirstChild("FaintedPP", true)
+        if pp and pp.ActionText:match("Carry") then
+            faintedNPC = npc
+            carryPP = pp
+            break
+        end
+    end
+
+    if faintedNPC and carryPP then
+        setStatus("!! PASIEN PINGSAN DITEMUKAN !!")
+        local part = faintedNPC.PrimaryPart or faintedNPC:FindFirstChildWhichIsA("BasePart")
+        local char = LocalPlayer.Character
+        local root = char and char:FindFirstChild("HumanoidRootPart")
+        
+        if root and part then
+            setStatus("Menggendong pasien pingsan...")
+            root.Anchored = true
+            root.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
+            root.Velocity = Vector3.zero
+            task.wait(Config.WaitTime)
+            root.Anchored = false
+            
+            simpleInteract(carryPP, 0) 
+            task.wait(1.5) 
+            
+            local targetRoom = findActiveRoom()
+            if targetRoom then
+                local roomNum = tonumber(targetRoom.Name:match("%d+"))
+                setStatus("Membawa pasien ke " .. targetRoom.Name .. "...")
+                teleportToSafeRoom(roomNum)
+                
+                local placePP = faintedNPC:FindFirstChild("FaintedPP", true)
+                if placePP then
+                    setStatus("Meletakkan pasien pingsan di kasur...")
+                    simpleInteract(placePP, 1) 
+                    task.wait(2)
+                end
+            else
+                setStatus("Gagal menemukan ruangan untuk pasien pingsan.")
+            end
+        end
+    end
+end
+
 local function executeTreatmentCore(roomPath)
     local minigame = roomPath:FindFirstChild("Minigame")
     if not minigame then return end
@@ -361,52 +423,56 @@ local function executeTreatmentCore(roomPath)
     local bedPart = bed and (bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart"))
     local patientIsAnomaly = false
 
-    -- 1. DNA & CEK ANOMALI (DENGAN SMART WAIT)
-    setStatus("1/5 Menunggu pasien rebahan & Mengambil DNA...")
+    -- 1. TUNGGU PASIEN & CEK STATUS (SMART RESUME)
+    setStatus("1/5 Menunggu pasien rebahan di kasur...")
     teleportToSafeRoom(roomNum) 
     
-    local dnaTaken = false
+    local targetNPC = nil
     local waitLimit = 0
-    -- Looping tunggu maksimal 15 detik (30 x 0.5 detik) sampai pasien beneran sampai ke kasur
-    while not dnaTaken and waitLimit < 30 do
+    
+    while not targetNPC and waitLimit < 30 do
         for _, npc in ipairs(workspace.NPCs:GetChildren()) do
-            local pp = npc:FindFirstChild("PP")
-            if pp and pp.ActionText:match("DNA") then
-                local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
-                if part and bedPart and (part.Position - bedPart.Position).Magnitude < 40 then
-                    if isAnomaly(npc) then
-                        patientIsAnomaly = true
-                        setStatus("!! PERINGATAN !! PASIEN INI ADALAH ANOMALI/MONSTER!")
-                    else
-                        setStatus("Pasien terdeteksi normal. Melanjutkan pengobatan...")
-                    end
-                    simpleInteract(pp, 0.25)
-                    dnaTaken = true
-                    break
-                end
+            local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+            if part and bedPart and (part.Position - bedPart.Position).Magnitude < 40 then
+                targetNPC = npc
+                break
             end
         end
-        if not dnaTaken then
+        if not targetNPC then
             task.wait(0.5)
             waitLimit = waitLimit + 1
         end
     end
 
-    -- Batal jika pasien tidak kunjung datang atau bug di jalan
-    if not dnaTaken then
-        setStatus("BATAL: Pasien tidak muncul/nyangkut di " .. roomPath.Name .. ".")
+    if not targetNPC then
+        setStatus("BATAL: Pasien tidak muncul di kasur " .. roomPath.Name .. ".")
         return
     end
 
+    if isAnomaly(targetNPC) then
+        patientIsAnomaly = true
+        setStatus("!! PERINGATAN !! PASIEN INI ADALAH ANOMALI/MONSTER!")
+    else
+        setStatus("Pasien terdeteksi normal.")
+    end
+
+    local dnaPP = targetNPC:FindFirstChild("PP")
+    if dnaPP and dnaPP:IsA("ProximityPrompt") and dnaPP.ActionText:match("DNA") then
+        setStatus("Mengambil DNA pasien...")
+        simpleInteract(dnaPP, 0.25)
+    else
+        setStatus("DNA sudah diambil sebelumnya (Melanjutkan progress)...")
+    end
+
     -- 2. Analyzer
-    setStatus("2/5 Analisis DNA dari Titik Aman...")
+    setStatus("2/5 Cek Mesin Analyzer...")
     local analyzer = minigame:FindFirstChild("Analyzer")
     if analyzer and analyzer:FindFirstChild("PP") then
         simpleInteract(analyzer.PP, 0.5)
     end
 
     -- 3. Monitor
-    setStatus("3/5 Memproses Komputer dari Titik Aman...")
+    setStatus("3/5 Cek Komputer Monitor...")
     local monitor = minigame:FindFirstChild("Monitor")
     if monitor and monitor:FindFirstChild("PP2") then
         simpleInteract(monitor.PP2, 0.25)
@@ -503,7 +569,7 @@ local function executeTreatmentCore(roomPath)
                 end
             end
         end
-        setStatus("--- PASIEN BERHASIL DIOBATI! (Selesai) ---")
+        setStatus("--- PASIEN BERHASIL DIOBATI! ---")
     end
     task.wait(1)
 end
@@ -516,6 +582,7 @@ local function safeTreatPatient(roomPath)
     isBusy = true
     
     local success, err = pcall(function()
+        handleFaintedPatientsIfAny() 
         executeTreatmentCore(roomPath)
     end)
     
@@ -524,7 +591,6 @@ local function safeTreatPatient(roomPath)
     end
     
     isBusy = false
-    setStatus("Idle")
 end
 
 -- ==========================================
@@ -553,7 +619,15 @@ ScanOnceBtn.MouseButton1Click:Connect(function()
     if isBusy then setStatus("Sedang sibuk memproses pasien!") return end
     task.spawn(function()
         local room = findActiveRoom()
-        if room then safeTreatPatient(room) else setStatus("Tidak ada pasien (Lampu Hitam)") end
+        if room then 
+            safeTreatPatient(room) 
+            -- Kembali ke lobby kalau selesai manual
+            teleportToIdle()
+            setStatus("Pengobatan Manual Selesai (Standby di Base).")
+        else 
+            teleportToIdle()
+            setStatus("Tidak ada pasien (Standby di Base).") 
+        end
     end)
 end)
 
@@ -563,13 +637,22 @@ ToggleAutoBtn.MouseButton1Click:Connect(function()
         ToggleAutoBtn.Text = "Auto-Scan: ON"
         ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
         setStatus("Auto-Scan dihidupkan. Menunggu pasien...")
+        
         _G.AutoDoctor_Loop = task.spawn(function()
             while autoScanEnabled do
                 if not isBusy then
                     local room = findActiveRoom()
-                    if room then safeTreatPatient(room) end
+                    if room then 
+                        safeTreatPatient(room) 
+                        task.wait(0.5) -- LANGSUNG SIKAT ROOM SELANJUTNYA TANPA DELAY
+                    else
+                        teleportToIdle() -- BALIK KE BASE KARENA KOSONG
+                        setStatus("Idle (Standby memantau di Base)...")
+                        task.wait(Config.ScanDelay) -- BARU DELAY 5 DETIK
+                    end
+                else
+                    task.wait(0.5)
                 end
-                task.wait(Config.ScanDelay)
             end
         end)
     else
