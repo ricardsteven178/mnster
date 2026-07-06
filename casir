@@ -1,0 +1,328 @@
+-- ==========================================
+-- CONFIGURATION (PENGATURAN)
+-- ==========================================
+local Config = {
+	ShowConsoleLogs = true, 
+	TeleportSebelumMelayani = true, 
+	TimeoutTungguNPC = 30,
+	
+	-- KOORDINAT TELEPORT
+	CashierCFrame = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967),
+	ShutterCFrame = CFrame.new(-113.169373, 3.41253114, -2.92784166, 0.999987602, 3.36771606e-08, 0.00498215528, -3.40864617e-08, 1, 8.20680768e-08, -0.00498215528, -8.22368875e-08, 0.999987602)
+}
+
+local function logInfo(message)
+	if Config.ShowConsoleLogs then
+		print("[Auto-Cashier] " .. message)
+	end
+end
+
+-- ==========================================
+-- ANTI DOUBLE EXECUTE
+-- ==========================================
+if _G.SmartCashier_Main then
+	_G.SmartCashier_Main:Destroy()
+end
+
+-- ==========================================
+-- VARIABEL UTAMA
+-- ==========================================
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local autoCashierEnabled = false
+local isProcessingAnomaly = false 
+
+local guiParent = (RunService:IsStudio() and LocalPlayer:WaitForChild("PlayerGui")) or pcall(function() return CoreGui.RobloxGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+
+-- ==========================================
+-- MEMBUAT GUI
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SmartCashierGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = guiParent
+_G.SmartCashier_Main = ScreenGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 250, 0, 100)
+MainFrame.Position = UDim2.new(0.5, -125, 0.5, -50)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -30, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "Smart Cashier v11"
+TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 14
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 70, 70)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+CloseBtn.Parent = TitleBar
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -30)
+ContentFrame.Position = UDim2.new(0, 0, 0, 30)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 200, 0, 40)
+ToggleBtn.Position = UDim2.new(0.5, -100, 0.5, -20)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+ToggleBtn.Text = "STATE MACHINE: OFF"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 13
+ToggleBtn.Parent = ContentFrame
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 6)
+ToggleCorner.Parent = ToggleBtn
+
+-- ==========================================
+-- LOGIKA & FUNGSI BANTUAN
+-- ==========================================
+local function firePrompt(prompt)
+	if prompt and prompt:IsA("ProximityPrompt") then
+		prompt.RequiresLineOfSight = false
+		prompt.MaxActivationDistance = math.huge
+		prompt.HoldDuration = 0
+		if type(fireproximityprompt) == "function" then
+			fireproximityprompt(prompt, 1, true)
+		else
+			prompt:InputHoldBegan() task.wait(0.05) prompt:InputHoldEnded()
+		end
+		return true
+	end
+	return false
+end
+
+local function equipBadge()
+	local char = LocalPlayer.Character
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if char and char:FindFirstChild("Humanoid") and backpack then
+		for _, tool in ipairs(backpack:GetChildren()) do
+			if tool:IsA("Tool") then
+				char.Humanoid:EquipTool(tool)
+			end
+		end
+	end
+end
+
+local function teleportTo(targetCFrame, namaLokasi)
+	if not Config.TeleportSebelumMelayani then return end
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if root then
+		local distance = (root.Position - targetCFrame.Position).Magnitude
+		if distance > 3 then
+			logInfo("Teleport -> " .. namaLokasi)
+			root.CFrame = targetCFrame
+			root.Velocity = Vector3.new(0,0,0)
+			task.wait(0.4) 
+		end
+	end
+end
+
+local function getActiveCustomer()
+	local npcsFolder = workspace:FindFirstChild("NPCs")
+	if not npcsFolder then return nil end
+	
+	local closestNPC = nil
+	local minDistance = 20 
+	
+	for _, npc in ipairs(npcsFolder:GetChildren()) do
+		if npc:IsA("Model") and npc.Name:lower() ~= "doctor" and npc.PrimaryPart then
+			local dist = (npc.PrimaryPart.Position - Config.CashierCFrame.Position).Magnitude
+			if dist < minDistance then
+				minDistance = dist
+				closestNPC = npc
+			end
+		end
+	end
+	return closestNPC
+end
+
+local function isAnomaly(npc)
+	local attr = npc:GetAttributes()
+	if attr.Skinwalker or attr.SkinwalkerEasy or attr.PenaltyWhenLettingIn or attr.PhotoEffect == "CursedPhoto" or attr.PhotoEffect2 == "CursedPhoto" then
+		return true
+	end
+	return false
+end
+
+local function getActiveDeskPrompt()
+	local checkIn = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn")
+	
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ProximityPrompt") and desc.ActionText == "Take" and desc.Enabled then
+			return desc, "Take Item"
+		end
+	end
+	local printPP = checkIn and checkIn:FindFirstChild("Printer") and checkIn.Printer:FindFirstChild("PP")
+	if printPP and printPP.Enabled then return printPP, "Print Badge" end
+	local compPP = checkIn and checkIn:FindFirstChild("Computer") and checkIn.Computer:FindFirstChild("PP")
+	if compPP and compPP.Enabled then return compPP, "Register" end
+	local camPP = checkIn and checkIn:FindFirstChild("Camera") and checkIn.Camera:FindFirstChild("PP")
+	if camPP and camPP.Enabled then return camPP, "Take Photo" end
+	local formPP = checkIn and checkIn:FindFirstChild("Form") and checkIn.Form:FindFirstChild("PP")
+	if formPP and formPP.Enabled then return formPP, "Stamp Form" end
+	
+	return nil, nil
+end
+
+-- ==========================================
+-- LOOP UTAMA
+-- ==========================================
+task.spawn(function()
+	logInfo("Mesin State V11 Aktif! Full Shutter Awareness dihidupkan.")
+	
+	while task.wait(0.5) do
+		if autoCashierEnabled and not isProcessingAnomaly then
+			pcall(function()
+				local activeNPC = getActiveCustomer()
+				local deskPrompt, stepName = getActiveDeskPrompt()
+				local talkPrompt = nil
+				local shutterPP = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("ShutterButton") and workspace.Misc.ShutterButton:FindFirstChild("PP")
+				
+				if activeNPC then
+					local pp = activeNPC:FindFirstChild("PP") or activeNPC:FindFirstChildWhichIsA("ProximityPrompt", true)
+					if pp and pp.Enabled and string.match(string.lower(pp.ActionText), "talk") then
+						talkPrompt = pp
+					end
+				end
+				
+				if deskPrompt or talkPrompt then
+					
+					teleportTo(Config.CashierCFrame, "Meja Kasir")
+					
+					-- =======================================
+					-- JALUR ANOMALI
+					-- =======================================
+					if activeNPC and isAnomaly(activeNPC) then
+						isProcessingAnomaly = true
+						logInfo("-> PERINGATAN! ANOMALI TERDETEKSI: " .. activeNPC.Name)
+						
+						-- PASTIKAN TERTUTUP
+						if shutterPP and shutterPP.ActionText == "Close" then
+							teleportTo(Config.ShutterCFrame, "Tombol Shutter")
+							firePrompt(shutterPP)
+							logInfo("-> Shutter Ditutup. Menjaga gerbang...")
+							teleportTo(Config.CashierCFrame, "Meja Kasir (Aman)")
+						end
+						
+						local timeout = 0
+						repeat
+							task.wait(1)
+							timeout = timeout + 1
+							
+							local currentCheckIn = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn")
+							local formExists = currentCheckIn and currentCheckIn:FindFirstChild("Form")
+							
+							-- ACTIVE GUARD (Troll nutup anomali)
+							if shutterPP and shutterPP.ActionText == "Close" and autoCashierEnabled then
+								logInfo("-> Troll Alert: Pintu dibuka player lain! Menutup paksa kembali...")
+								teleportTo(Config.ShutterCFrame, "Tombol Shutter")
+								firePrompt(shutterPP)
+								teleportTo(Config.CashierCFrame, "Meja Kasir (Aman)")
+								timeout = 0 
+							end
+							
+						until not activeNPC.Parent or activeNPC.Parent == nil or not formExists or not autoCashierEnabled or timeout > Config.TimeoutTungguNPC
+						
+						logInfo("-> Anomali atau Form telah dihapus server. Aman!")
+						task.wait(1)
+						
+						if shutterPP and shutterPP.ActionText == "Open" then
+							teleportTo(Config.ShutterCFrame, "Tombol Shutter")
+							firePrompt(shutterPP)
+							logInfo("-> Shutter Dibuka Kembali.")
+							teleportTo(Config.CashierCFrame, "Meja Kasir")
+						end
+						
+						isProcessingAnomaly = false
+						return 
+					end
+					
+					-- =======================================
+					-- JALUR MANUSIA NORMAL
+					-- =======================================
+					
+					-- SENSOR KEAMANAN UNTUK PELANGGAN NORMAL:
+					-- Kalau pintunya ketutup (Text = "Open"), buka dulu pintunya sebelum ngelayanin!
+					if shutterPP and shutterPP.ActionText == "Open" then
+						logInfo("-> Pintu tertutup! Membuka paksa untuk pelanggan normal...")
+						teleportTo(Config.ShutterCFrame, "Tombol Shutter")
+						firePrompt(shutterPP)
+						teleportTo(Config.CashierCFrame, "Meja Kasir")
+						task.wait(0.5) -- Beri waktu sistem update
+						return -- Stop loop ini, biar loop 0.5 detik berikutnya lanjutin proses di meja
+					end
+					
+					if talkPrompt then
+						logInfo("-> Eksekusi: Talk (Selesai)")
+						equipBadge() 
+						task.wait(0.2)
+						firePrompt(talkPrompt)
+					elseif deskPrompt then
+						logInfo("-> Eksekusi: " .. stepName)
+						firePrompt(deskPrompt)
+						task.wait(0.2) 
+					end
+					
+				end
+			end)
+		end
+	end
+end)
+
+-- ==========================================
+-- TOMBOL GUI
+-- ==========================================
+ToggleBtn.MouseButton1Click:Connect(function()
+	autoCashierEnabled = not autoCashierEnabled
+	
+	if autoCashierEnabled then
+		ToggleBtn.Text = "STATE MACHINE: ON"
+		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+		logInfo("SISTEM DINYALAKAN")
+	else
+		ToggleBtn.Text = "STATE MACHINE: OFF"
+		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		logInfo("SISTEM DIMATIKAN")
+		isProcessingAnomaly = false
+	end
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+	autoCashierEnabled = false
+	if _G.SmartCashier_Main then _G.SmartCashier_Main:Destroy() end
+end)
