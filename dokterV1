@@ -8,14 +8,13 @@ if _G.AutoDoctor_Loop then task.cancel(_G.AutoDoctor_Loop) end
 -- CONFIGURATION & KOORDINAT AMAN ROOM
 -- ==========================================
 local Config = {
-    ShowConsoleLogs = true,   -- TRUE = Tampilkan log detail di console (F9)
-    MaxRooms = 5,             -- Room 1-5 saja
+    ShowConsoleLogs = true,   
+    MaxRooms = 5,             
     WaitTime = 0.5,           
     MaxInventory = 3,         
     ScanDelay = 5
 }
 
--- [ DATABASE KOORDINAT TENGAH RUANGAN (ANTI-NYANGKUT) ]
 local RoomCFrames = {
     [1] = CFrame.new(-175.075592, 3.45753217, -43.3536415, 0.770063639, -6.97426117e-08, -0.63796705, 8.6692296e-08, 1, -4.67739758e-09, 0.63796705, -5.17049372e-08, 0.770063639),
     [2] = CFrame.new(-115.003395, 3.45753145, -57.2858963, -0.190040156, 1.07498074e-07, -0.981776297, 2.6608399e-08, 1, 1.04342924e-07, 0.981776297, -6.29414965e-09, -0.190040156),
@@ -77,7 +76,7 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "Auto Doctor v14"
+TitleText.Text = "Auto Doctor v15"
 TitleText.TextColor3 = Color3.fromRGB(0, 255, 150)
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 14
@@ -154,7 +153,6 @@ local function setStatus(text)
     end
 end
 
--- Teleport Khusus ke Titik Aman Room
 local function teleportToSafeRoom(roomNum)
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
@@ -296,8 +294,6 @@ end
 -- ==========================================
 -- MEDICAL & ROOM LOGIC
 -- ==========================================
-
--- [ DIPERBARUI ]: Eksekusi Prompt TANPA teleport ke objek. Cukup tembak dari Titik Aman Room.
 local function simpleInteract(prompt, customHold)
     if prompt and prompt:IsA("ProximityPrompt") then
         local oldReq = prompt.RequiresLineOfSight
@@ -365,25 +361,41 @@ local function executeTreatmentCore(roomPath)
     local bedPart = bed and (bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart"))
     local patientIsAnomaly = false
 
-    -- 1. DNA & CEK ANOMALI
-    setStatus("1/5 Berdiri di Titik Aman: Mengambil DNA & Scanning...")
-    teleportToSafeRoom(roomNum) -- Teleport ke titik koordinat 1x
+    -- 1. DNA & CEK ANOMALI (DENGAN SMART WAIT)
+    setStatus("1/5 Menunggu pasien rebahan & Mengambil DNA...")
+    teleportToSafeRoom(roomNum) 
     
-    for _, npc in ipairs(workspace.NPCs:GetChildren()) do
-        local pp = npc:FindFirstChild("PP")
-        if pp and pp.ActionText:match("DNA") then
-            local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
-            if part and bedPart and (part.Position - bedPart.Position).Magnitude < 40 then
-                if isAnomaly(npc) then
-                    patientIsAnomaly = true
-                    setStatus("!! PERINGATAN !! PASIEN INI ADALAH ANOMALI/MONSTER!")
-                else
-                    setStatus("Pasien terdeteksi normal. Melanjutkan pengobatan...")
+    local dnaTaken = false
+    local waitLimit = 0
+    -- Looping tunggu maksimal 15 detik (30 x 0.5 detik) sampai pasien beneran sampai ke kasur
+    while not dnaTaken and waitLimit < 30 do
+        for _, npc in ipairs(workspace.NPCs:GetChildren()) do
+            local pp = npc:FindFirstChild("PP")
+            if pp and pp.ActionText:match("DNA") then
+                local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+                if part and bedPart and (part.Position - bedPart.Position).Magnitude < 40 then
+                    if isAnomaly(npc) then
+                        patientIsAnomaly = true
+                        setStatus("!! PERINGATAN !! PASIEN INI ADALAH ANOMALI/MONSTER!")
+                    else
+                        setStatus("Pasien terdeteksi normal. Melanjutkan pengobatan...")
+                    end
+                    simpleInteract(pp, 0.25)
+                    dnaTaken = true
+                    break
                 end
-                simpleInteract(pp, 0.25)
-                break
             end
         end
+        if not dnaTaken then
+            task.wait(0.5)
+            waitLimit = waitLimit + 1
+        end
+    end
+
+    -- Batal jika pasien tidak kunjung datang atau bug di jalan
+    if not dnaTaken then
+        setStatus("BATAL: Pasien tidak muncul/nyangkut di " .. roomPath.Name .. ".")
+        return
     end
 
     -- 2. Analyzer
@@ -404,10 +416,10 @@ local function executeTreatmentCore(roomPath)
     setStatus("4/5 Membaca Kebutuhan Obat dari TV...")
     if tvUI and tvUI:FindFirstChild("inv", true) then
         local invFolder = tvUI:FindFirstChild("inv", true)
-        local waitLimit = 0
-        while #invFolder:GetChildren() <= 1 and waitLimit < 15 do
+        local waitLimitTV = 0
+        while #invFolder:GetChildren() <= 1 and waitLimitTV < 15 do
             task.wait(0.5)
-            waitLimit = waitLimit + 1
+            waitLimitTV = waitLimitTV + 1
         end
     end
 
@@ -425,7 +437,7 @@ local function executeTreatmentCore(roomPath)
         if not hasIt then fetchItem(wrongMedicine) end
         
         if bed and bed:FindFirstChild("PP") then
-            teleportToSafeRoom(roomNum) -- Pastikan kembali ke titik aman setelah ngambil item
+            teleportToSafeRoom(roomNum) 
             local tool = LocalPlayer.Backpack:FindFirstChild(wrongMedicine) or LocalPlayer.Character:FindFirstChild(wrongMedicine)
             if tool then LocalPlayer.Character.Humanoid:EquipTool(tool) end
             task.wait(0.2)
@@ -471,7 +483,7 @@ local function executeTreatmentCore(roomPath)
             end
 
             if #medsReadyToGive > 0 and bed and bed:FindFirstChild("PP") then
-                teleportToSafeRoom(roomNum) -- Kembali ke titik aman untuk nyuntik
+                teleportToSafeRoom(roomNum) 
                 
                 setStatus("Menyuntikkan " .. #medsReadyToGive .. " obat sekaligus...")
                 for _, obat in ipairs(medsReadyToGive) do
