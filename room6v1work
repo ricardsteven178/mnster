@@ -1,0 +1,366 @@
+-- ==========================================
+-- AUTO DOCTOR: ROOM 6 STANDALONE (SMART RESUME & KILL SWITCH)
+-- ==========================================
+
+-- [ANTI DOUBLE EXECUTE & CLEANUP]
+if _G.Room6_Standalone then _G.Room6_Standalone:Destroy() end
+if _G.Room6_Loop then task.cancel(_G.Room6_Loop) end
+
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+local Room6CFrame = CFrame.new(-171.493195, 3.4575305, 57.6354637, -0.097861506, 5.37626921e-09, 0.995200038, -8.93599061e-09, 1, -6.28090646e-09, -0.995200038, -9.50775725e-09, -0.097861506)
+local ItemList = {"Herbs", "Medicine", "Maple Syrup", "Cough Syrup", "Bandages", "Ointment", "Thermo", "Medkit", "IV Drops", "Eye Drops", "Antibiotics", "Scalpel", "Scissors", "Organ", "Transplant"}
+
+local isRunning = false
+local autoActive = false
+local stopColorTracker = false
+
+-- ==========================================
+-- 1. GUI (BISA DI-CLOSE TOTAL)
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Room6Auto"
+ScreenGui.Parent = pcall(function() return CoreGui.RobloxGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+_G.Room6_Standalone = ScreenGui
+
+local Frame = Instance.new("Frame", ScreenGui)
+Frame.Size = UDim2.new(0, 220, 0, 100)
+Frame.Position = UDim2.new(0.5, 150, 0.8, -50)
+Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+Frame.Active = true
+Frame.Draggable = true
+Instance.new("UICorner", Frame).CornerRadius = UDim.new(0, 6)
+
+local TitleBar = Instance.new("Frame", Frame)
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 6)
+
+local Title = Instance.new("TextLabel", TitleBar)
+Title.Size = UDim2.new(1, -30, 1, 0)
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "🏥 Smart Auto R6"
+Title.TextColor3 = Color3.fromRGB(0, 255, 150)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 13
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+-- TOMBOL CLOSE (MATI TOTAL)
+local CloseBtn = Instance.new("TextButton", TitleBar)
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+
+local Status = Instance.new("TextLabel", Frame)
+Status.Size = UDim2.new(1, -10, 0, 20)
+Status.Position = UDim2.new(0, 5, 0, 35)
+Status.BackgroundTransparency = 1
+Status.Text = "Status: Idle"
+Status.TextColor3 = Color3.fromRGB(180, 180, 180)
+Status.Font = Enum.Font.Gotham
+Status.TextSize = 11
+Status.TextScaled = true
+
+local ToggleBtn = Instance.new("TextButton", Frame)
+ToggleBtn.Size = UDim2.new(1, -20, 0, 30)
+ToggleBtn.Position = UDim2.new(0, 10, 0, 60)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+ToggleBtn.Text = "START AUTO R6"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 12
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 4)
+
+local function setStatus(txt)
+    Status.Text = txt
+    print("[Room 6] " .. txt)
+end
+
+-- ==========================================
+-- 2. UTILITIES
+-- ==========================================
+local function interact(prompt, holdTime)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return end
+    prompt.RequiresLineOfSight = false
+    prompt.MaxActivationDistance = math.huge
+    if type(fireproximityprompt) == "function" then
+        fireproximityprompt(prompt, 1, true)
+    else
+        prompt:InputHoldBegan()
+        task.wait(holdTime)
+        prompt:InputHoldEnded()
+    end
+    task.wait(0.5)
+end
+
+local function getInventoryCount()
+    local count = 0
+    if LocalPlayer:FindFirstChild("Backpack") then
+        for _, v in ipairs(LocalPlayer.Backpack:GetChildren()) do if table.find(ItemList, v.Name) then count = count + 1 end end
+    end
+    return count
+end
+
+local function fetchItem(itemName)
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+
+    if getInventoryCount() >= 3 then
+        local trash = workspace:FindFirstChild("Trash")
+        local itemToTrash = LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
+        if trash and itemToTrash then
+            LocalPlayer.Character.Humanoid:EquipTool(itemToTrash)
+            root.CFrame = (trash:IsA("Model") and trash.PrimaryPart.CFrame or trash.CFrame) * CFrame.new(0,3,0)
+            task.wait(0.5)
+            interact(trash:FindFirstChildWhichIsA("ProximityPrompt", true), 0)
+        end
+    end
+
+    for _, item in ipairs(workspace:GetDescendants()) do
+        if item.Name == itemName then
+            local p = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+            local part = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
+            if p and part then
+                root.CFrame = part.CFrame * CFrame.new(0,3,0)
+                root.Velocity = Vector3.zero
+                task.wait(0.5)
+                interact(p, 0)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- ==========================================
+-- 3. BACKGROUND COLOR TRACKER (INDEPENDENT)
+-- ==========================================
+local function startColorTracker(minigame)
+    local colors = minigame:FindFirstChild("Colors")
+    if not colors then return end
+
+    local seq = {}
+    local conns = {}
+    local listening = true
+    local lastTime = tick()
+    stopColorTracker = false
+
+    -- Listener Lampu
+    for _, btn in ipairs(colors:GetDescendants()) do
+        if btn:IsA("BasePart") and btn.Name == "Button" then
+            table.insert(conns, btn:GetPropertyChangedSignal("BrickColor"):Connect(function()
+                if stopColorTracker or not listening then return end
+                if tostring(btn.BrickColor) ~= "Black" then
+                    task.delay(0.2, function()
+                        if tostring(btn.BrickColor) ~= "Black" then
+                            table.insert(seq, btn)
+                            lastTime = tick()
+                        end
+                    end)
+                end
+            end))
+        end
+    end
+
+    -- Eksekutor Klik
+    task.spawn(function()
+        while not stopColorTracker do
+            task.wait(0.3)
+            if #seq > 0 and (tick() - lastTime) > 1.5 then
+                listening = false
+                setStatus("🤖 Tracker: Auto Klik " .. #seq .. " Warna!")
+                for _, btn in ipairs(seq) do
+                    if stopColorTracker then break end
+                    local cd = btn:FindFirstChildWhichIsA("ClickDetector")
+                    local prox = btn:FindFirstChildWhichIsA("ProximityPrompt")
+                    if cd and fireclickdetector then fireclickdetector(cd) end
+                    if prox then interact(prox, 0) end
+                    task.wait(0.6)
+                end
+                seq = {}
+                task.wait(1)
+                listening = true
+                lastTime = tick()
+            end
+        end
+        for _, c in ipairs(conns) do c:Disconnect() end
+    end)
+end
+
+-- ==========================================
+-- 4. SMART RESUME LOGIC (DYNAMIC STATE)
+-- ==========================================
+local function executeRoom6()
+    local path = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room6")
+    local minigame = path and path:FindFirstChild("Minigame")
+    local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    
+    if not minigame or not root then return end
+
+    -- [UPDATE] Cek Status Room 6 Lewat Layar TV / Monitor XRay (Tanpa mencari kasur)
+    local tvScreen = minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen", true)
+    local treatTextObj = tvScreen and tvScreen:FindFirstChild("treatment", true)
+    local xray = minigame:FindFirstChild("xrayMonitor")
+    local xrayPP = xray and xray:FindFirstChild("PP")
+    
+    local isRoomActive = false
+    
+    -- Parameter 1: Jika TV memiliki teks treatment (misal 0/3) yang belum selesai
+    if treatTextObj then
+        local cur, max = treatTextObj.Text:match("(%d+)/(%d+)")
+        if cur and max and cur ~= max and max ~= "0" then
+            isRoomActive = true
+        end
+    end
+    
+    -- Parameter 2: Jika TV belum nyala, tapi X-Ray siap ditekan
+    if xrayPP and xrayPP.Enabled then
+        isRoomActive = true
+    end
+
+    -- Jika tidak ada tanda-tanda pasien, batalkan
+    if not isRoomActive then return end
+
+    setStatus("Kondisi Room 6 Aktif! Menyiapkan R6...")
+    root.CFrame = Room6CFrame
+    root.Velocity = Vector3.zero
+    task.wait(1)
+
+    -- Jalankan Tracker Warna di Background
+    startColorTracker(minigame)
+
+    local isDone = false
+    local timeout = 120 -- Timeout 120 detik per pasien
+    
+    -- LOOP DINAMIS: Cek apa yang aktif saat ini, dan jalankan!
+    while not isDone and timeout > 0 and autoActive do
+        task.wait(1)
+        timeout = timeout - 1
+
+        -- CEK STATE 1: Apakah sudah waktunya Suntik? (Cek Layar TV)
+        local invUI = tvScreen and tvScreen:FindFirstChild("inv", true)
+        
+        -- Cari target suntik (NPC di dekat Room 6 karena kasur tidak ada)
+        local patientPP = nil
+        for _, npc in ipairs(workspace.NPCs:GetChildren()) do
+            local pt = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+            if pt and (pt.Position - Room6CFrame.Position).Magnitude < 40 then
+                patientPP = npc:FindFirstChild("PP") or npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+                break
+            end
+        end
+        -- Fallback jika NPC tidak ketemu, cari PP acak di dalam minigame yang bukan mesin
+        if not patientPP then patientPP = minigame:FindFirstChild("PP", true) end
+
+        if invUI and #invUI:GetChildren() > 1 then
+            local pending = {}
+            for _, req in ipairs(invUI:GetChildren()) do
+                if not req:IsA("UIListLayout") then
+                    local chk = req:FindFirstChild("check")
+                    if not chk or not chk.Visible then table.insert(pending, req.Name) end
+                end
+            end
+
+            if #pending == 0 then
+                setStatus("✅ Pengobatan R6 Selesai!")
+                isDone = true
+                break
+            else
+                for _, obat in ipairs(pending) do
+                    local hasItem = LocalPlayer.Backpack:FindFirstChild(obat) or LocalPlayer.Character:FindFirstChild(obat)
+                    if not hasItem then fetchItem(obat) end
+                    
+                    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then 
+                        LocalPlayer.Character.HumanoidRootPart.CFrame = Room6CFrame 
+                    end
+                    task.wait(0.5)
+                    
+                    local tool = LocalPlayer.Backpack:FindFirstChild(obat)
+                    if tool then LocalPlayer.Character.Humanoid:EquipTool(tool) end
+                    task.wait(0.2)
+                    
+                    setStatus("Menerapkan: " .. obat)
+                    if patientPP then interact(patientPP, 0.25) end
+                end
+                continue -- Ulang loop untuk ngecek sisa obat
+            end
+        end
+
+        -- CEK STATE 2: Apakah ada Prompt Collect? (Warna Selesai)
+        local collected = false
+        for _, pp in ipairs(minigame:GetDescendants()) do
+            if pp:IsA("ProximityPrompt") and pp.ActionText:match("Collect") and pp.Enabled then
+                setStatus("Mengambil Hasil (Collect)...")
+                interact(pp, 0.5)
+                collected = true
+                break
+            end
+        end
+        if collected then continue end 
+
+        -- CEK STATE 3: Apakah ada Process Results? (X-Ray Selesai)
+        local monitor = minigame:FindFirstChild("Monitor")
+        local pp2 = monitor and monitor:FindFirstChild("PP2")
+        if pp2 and pp2.Enabled then
+            setStatus("Memproses Monitor (PP2)...")
+            interact(pp2, 0.25)
+            continue
+        end
+
+        -- CEK STATE 4: Apakah X-Ray Belum Dipencet?
+        if xrayPP and xrayPP.Enabled then
+            setStatus("Memulai X-Ray...")
+            interact(xrayPP, 0.25)
+            continue
+        end
+
+        setStatus("Menunggu / Memproses Minigame...")
+    end
+
+    stopColorTracker = true 
+end
+
+-- ==========================================
+-- 5. LOOP CONTROL & KILL SWITCH
+-- ==========================================
+ToggleBtn.MouseButton1Click:Connect(function()
+    autoActive = not autoActive
+    if autoActive then
+        ToggleBtn.Text = "STOP AUTO R6"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+        
+        _G.Room6_Loop = task.spawn(function()
+            while autoActive do
+                if not isRunning then
+                    isRunning = true
+                    pcall(executeRoom6)
+                    isRunning = false
+                end
+                setStatus("Mengecek TV Monitor R6...")
+                task.wait(3) 
+            end
+        end)
+    else
+        ToggleBtn.Text = "START AUTO R6"
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        setStatus("Auto Dimatikan.")
+        stopColorTracker = true
+        if _G.Room6_Loop then task.cancel(_G.Room6_Loop) end
+    end
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    autoActive = false
+    stopColorTracker = true
+    if _G.Room6_Loop then task.cancel(_G.Room6_Loop) end
+    if _G.Room6_Standalone then _G.Room6_Standalone:Destroy() end
+    print("[Room 6] GUI ditutup dan semua loop dimatikan secara total.")
+end)
