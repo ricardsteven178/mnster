@@ -1,0 +1,110 @@
+-- ==========================================================
+-- 🎯 VISUAL LASER DEBUGGER V9 (PERFECT INSET + FILTER LOGIC)
+-- ==========================================================
+local Players = game:GetService("Players")
+local GuiService = game:GetService("GuiService")
+local PlayerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+local guiParent = (gethui and gethui()) or game:GetService("CoreGui") or PlayerGui
+
+local ID_HAND = "rbxassetid://76833679466645"
+local ID_SKULL = "rbxassetid://2766332187"
+
+-- 1. CLEANUP
+if guiParent:FindFirstChild("LaserSpy") then guiParent.LaserSpy:Destroy() end
+if guiParent:FindFirstChild("LaserDotsGui") then guiParent.LaserDotsGui:Destroy() end
+
+local connections = {}
+
+local laserDotsGui = Instance.new("ScreenGui")
+laserDotsGui.Name = "LaserDotsGui"
+laserDotsGui.IgnoreGuiInset = true -- Kita biarkan true, lalu kita offset secara manual pakai math
+laserDotsGui.Parent = guiParent
+
+-- 2. GUI SAKELAR
+local ScreenGui = Instance.new("ScreenGui", guiParent); ScreenGui.Name = "LaserSpy"
+local MainFrame = Instance.new("Frame", ScreenGui); MainFrame.Size = UDim2.new(0, 260, 0, 80); MainFrame.Position = UDim2.new(0.5, -130, 0, 20); MainFrame.BackgroundColor3 = Color3.fromRGB(20, 25, 30); MainFrame.Draggable = true
+local CloseButton = Instance.new("TextButton", MainFrame); CloseButton.Size = UDim2.new(0.8, 0, 0, 40); CloseButton.Position = UDim2.new(0.1, 0, 0, 20); CloseButton.Text = "🛑 MATIKAN SCANNER"
+CloseButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50); CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255); CloseButton.Font = Enum.Font.GothamBold
+
+table.insert(connections, CloseButton.MouseButton1Click:Connect(function()
+	for _, conn in ipairs(connections) do conn:Disconnect() end
+	ScreenGui:Destroy(); laserDotsGui:Destroy()
+end))
+
+-- 3. FUNGSI GAMBAR LASER (RUMUS V3 KAMU)
+local function CreateDot(target, color)
+	if not target then return end
+	
+	local pos = target.AbsolutePosition
+	local size = target.AbsoluteSize
+	local inset = GuiService:GetGuiInset()
+
+	-- Kordinat Asli + Fix Topbar
+	local rawX = pos.X + (size.X / 2)
+	local rawY = pos.Y + (size.Y / 2)
+	local fixedY = rawY + inset.Y -- Menambahkan 36 Pixel Topbar agar pas di tengah
+
+	local dot = Instance.new("Frame")
+	dot.Size = UDim2.new(0, 14, 0, 14)
+	dot.AnchorPoint = Vector2.new(0.5, 0.5) -- Tetap pakai AnchorPoint agar tidak meleset ke samping
+	dot.Position = UDim2.new(0, rawX, 0, fixedY) 
+	dot.BackgroundColor3 = color
+	Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+	dot.Parent = laserDotsGui
+	
+	-- Musnahkan setelah 1.5 detik
+	task.delay(1.5, function() if dot then dot:Destroy() end end)
+end
+
+-- 4. FILTER DETEKSI CERDAS (LOGIKA V8 AKU)
+local function OnChildAdded(child)
+	-- Tunggu sebentar agar game selesai mengatur visibilitas tengkorak/jari
+	task.wait(0.05)
+	if not child or not child.Parent then return end
+
+	local isHand = false
+	local isSkull = false
+
+	-- Cari gambar di dalam template yang sedang Visible = true
+	local itemsToCheck = {child}
+	for _, desc in ipairs(child:GetDescendants()) do
+		table.insert(itemsToCheck, desc)
+	end
+
+	for _, obj in ipairs(itemsToCheck) do
+		if (obj:IsA("ImageLabel") or obj:IsA("ImageButton")) and obj.Visible then
+			if obj.Image == ID_HAND then
+				isHand = true
+			elseif obj.Image == ID_SKULL then
+				isSkull = true
+			end
+		end
+	end
+
+	-- Eksekusi Laser
+	if isHand then
+		CreateDot(child, Color3.fromRGB(50, 255, 50)) -- JARI = HIJAU
+	elseif isSkull then
+		CreateDot(child, Color3.fromRGB(255, 50, 50)) -- TENGKORAK = MERAH
+	end
+end
+
+-- 5. EVENT HOOK
+local function HookMinigame(gui)
+	local frame = gui:FindFirstChild("Frame")
+	if frame then 
+		table.insert(connections, frame.ChildAdded:Connect(OnChildAdded)) 
+	end
+end
+
+local minigame = PlayerGui:FindFirstChild("Minigame")
+if minigame then HookMinigame(minigame) end
+
+table.insert(connections, PlayerGui.ChildAdded:Connect(function(c) 
+	if c.Name == "Minigame" then 
+		task.wait(0.5)
+		HookMinigame(c) 
+	end 
+end))
+
+print("✅ VISUAL LASER V9 (PERFECT AIM) AKTIF!")
