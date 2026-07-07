@@ -1,5 +1,5 @@
 -- ==========================================================
--- ☕ ULTIMATE AUTO-COFFEE V9 (AUTO-UNEQUIP & SAFE TELEPORT)
+-- ☕ ULTIMATE AUTO-COFFEE V10 (LIVE MACHINE DASHBOARD)
 -- ==========================================================
 
 -- ==========================================
@@ -9,7 +9,7 @@ local Config = {
 	MaxKopiDiTas = 3,          
 	BatasMinum = 95,           
 	JedaMinum = 1.5,           -- (Detik) Waktu tunggu per teguk
-	DelayTeleport = 0.5,       -- (Detik) Waktu diam di mesin SEBELUM menekan ambil
+	DelayTeleport = 0.8,       -- (Detik) Waktu diam di mesin SEBELUM menekan ambil
 	DelayKembali = 0.6,        -- (Detik) Waktu menunggu kopinya masuk tas SETELAH ditekan SEBELUM balik
 	TargetSanityUI = "amount"  
 }
@@ -25,11 +25,11 @@ local LocalPlayer = Players.LocalPlayer
 -- GUI SETUP
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoCoffeeUI_V9"
+ScreenGui.Name = "AutoCoffeeUI_V10"
 ScreenGui.Parent = CoreGui
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 260, 0, 110)
+MainFrame.Size = UDim2.new(0, 260, 0, 135) -- ⬆️ Ukuran diperbesar untuk menampung panel baru
 MainFrame.Position = UDim2.new(0.5, -130, 0, 20)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 18, 22)
 MainFrame.BorderSizePixel = 0
@@ -45,7 +45,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -70, 0, 30)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "☕ Auto-Coffee V9"
+Title.Text = "☕ Auto-Coffee V10"
 Title.TextColor3 = Color3.fromRGB(100, 255, 100)
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Font = Enum.Font.GothamBold
@@ -78,9 +78,21 @@ ContentFrame.Position = UDim2.new(0, 0, 0, 30)
 ContentFrame.BackgroundTransparency = 1
 ContentFrame.Parent = MainFrame
 
+-- 🌟 PANEL BARU: STATUS MESIN LIVE 🌟
+local MachineStatus = Instance.new("TextLabel")
+MachineStatus.Size = UDim2.new(1, -20, 0, 25)
+MachineStatus.Position = UDim2.new(0, 10, 0, 0)
+MachineStatus.BackgroundTransparency = 1
+MachineStatus.RichText = true -- Mengaktifkan tag warna font HTML
+MachineStatus.Text = "K1: Membaca... | K2: Membaca..."
+MachineStatus.TextColor3 = Color3.fromRGB(255, 255, 255)
+MachineStatus.Font = Enum.Font.GothamBold
+MachineStatus.TextSize = 12
+MachineStatus.Parent = ContentFrame
+
 local SanityStatus = Instance.new("TextLabel")
 SanityStatus.Size = UDim2.new(1, -20, 0, 25)
-SanityStatus.Position = UDim2.new(0, 10, 0, 0)
+SanityStatus.Position = UDim2.new(0, 10, 0, 25) -- Digeser ke bawah
 SanityStatus.BackgroundTransparency = 1
 SanityStatus.Text = "🧠 Sanity: Membaca..."
 SanityStatus.TextColor3 = Color3.fromRGB(255, 200, 100)
@@ -90,7 +102,7 @@ SanityStatus.Parent = ContentFrame
 
 local FarmStatus = Instance.new("TextLabel")
 FarmStatus.Size = UDim2.new(1, -20, 0, 25)
-FarmStatus.Position = UDim2.new(0, 10, 0, 25)
+FarmStatus.Position = UDim2.new(0, 10, 0, 50) -- Digeser ke bawah
 FarmStatus.BackgroundTransparency = 1
 FarmStatus.Text = "🎒 Stok: Membaca..."
 FarmStatus.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -100,7 +112,7 @@ FarmStatus.Parent = ContentFrame
 
 local ActionLog = Instance.new("TextLabel")
 ActionLog.Size = UDim2.new(1, -20, 0, 25)
-ActionLog.Position = UDim2.new(0, 10, 0, 50)
+ActionLog.Position = UDim2.new(0, 10, 0, 75) -- Digeser ke bawah
 ActionLog.BackgroundTransparency = 1
 ActionLog.Text = "-"
 ActionLog.TextColor3 = Color3.fromRGB(150, 200, 255)
@@ -115,7 +127,8 @@ local isMinimized = false
 MinButton.MouseButton1Click:Connect(function()
 	isMinimized = not isMinimized
 	ContentFrame.Visible = not isMinimized
-	MainFrame.Size = isMinimized and UDim2.new(0, 260, 0, 30) or UDim2.new(0, 260, 0, 110)
+	-- Sesuaikan tinggi saat terbuka atau diminimize
+	MainFrame.Size = isMinimized and UDim2.new(0, 260, 0, 30) or UDim2.new(0, 260, 0, 135)
 end)
 
 local isAutoRunning = true
@@ -131,10 +144,45 @@ getgenv().KillAutoCoffee = function()
 	table.clear(trackedMachines)
 	if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
 	getgenv().KillAutoCoffee = nil
-	print("✅ [AUTO-COFFEE V9 MATI TOTAL]")
+	print("✅ [AUTO-COFFEE V10 MATI TOTAL]")
 end
 
 CloseBtnX.MouseButton1Click:Connect(function() getgenv().KillAutoCoffee() end)
+
+-- ==========================================
+-- FUNGSI MEMBACA STATUS MESIN (K1 & K2)
+-- ==========================================
+local function getMachineInfo(machineName)
+	local machine = workspace.Misc:FindFirstChild(machineName)
+	-- Kalau mesinnya tidak ada/belum spawn
+	if not machine then return "-" end
+	
+	-- Kalau atribut Brewing false berarti Kopi Siap (Kasih warna hijau)
+	if machine:GetAttribute("Brewing") == false then
+		return '<font color="rgb(50, 255, 50)">Ready</font>'
+	end
+	
+	-- Kalau masih Brewing, kita cari angka countdown-nya di UI
+	local statusUI = machine:FindFirstChild("Attachment") 
+		and machine.Attachment:FindFirstChild("UI") 
+		and machine.Attachment.UI:FindFirstChild("status")
+		
+	if statusUI then
+		local cleanText = string.gsub(statusUI.Text, "<[^>]+>", "") -- Buang tag HTML bawaan game
+		local timeMatch = string.match(cleanText, "%d+s") -- Cari format angka + "s" (contoh: 52s)
+		if timeMatch then
+			return timeMatch
+		end
+	end
+	
+	return "Wait"
+end
+
+local function updateMachineStatusUI()
+	local k1 = getMachineInfo("CoffeeMachine")
+	local k2 = getMachineInfo("CoffeeMachine2")
+	MachineStatus.Text = "K1: " .. k1 .. " | K2: " .. k2
+end
 
 -- ==========================================
 -- FUNGSI INVENTORY & SANITY
@@ -186,7 +234,6 @@ local function handleCoffeeDrinking()
 	local backpack = LocalPlayer:FindFirstChild("Backpack")
 	if not character or not humanoid or not backpack then return end
 
-	-- JIKA BUTUH MINUM
 	if currentSanity <= Config.BatasMinum then
 		local heldTool = nil
 		for _, item in pairs(character:GetChildren()) do
@@ -213,7 +260,6 @@ local function handleCoffeeDrinking()
 			task.wait(Config.JedaMinum) 
 		end
 	else
-		-- 🛡️ FITUR BARU: JIKA SANITY SUDAH AMAN, KEMBALIKAN KOPI KE TAS
 		for _, item in pairs(character:GetChildren()) do
 			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
 				humanoid:UnequipTools()
@@ -233,7 +279,6 @@ local function takeCoffee(machine)
 	if not isAutoRunning then return end
 	if countMyCoffee() >= Config.MaxKopiDiTas then return end
 	
-	-- VALIDASI LAPIS 2: CEK TEKS UI
 	local statusUI = machine:FindFirstChild("Attachment") 
 		and machine.Attachment:FindFirstChild("UI") 
 		and machine.Attachment.UI:FindFirstChild("status")
@@ -243,7 +288,6 @@ local function takeCoffee(machine)
 		if not string.find(cleanText, "ready") then return end
 	end
 
-	-- VALIDASI LAPIS 3: CEK PATH PROMPT AKURAT
 	local coffeeModel = machine:FindFirstChild("Coffee")
 	local prompt = coffeeModel and coffeeModel:FindFirstChild("PP")
 	
@@ -255,23 +299,17 @@ local function takeCoffee(machine)
 	if rootPart then
 		local originalPos = rootPart.CFrame
 		rootPart.CFrame = coffeeStandCFrame
-		
-		-- ⏱️ Delay sebelum menekan prompt
 		task.wait(Config.DelayTeleport) 
-		
 		fireproximityprompt(prompt)
 		ActionLog.Text = "⚡ Mengambil Kopi dari " .. machine.Name
-		
-		-- ⏱️ Delay LEBIH LAMA setelah menekan prompt agar server sempat memasukkan kopi ke tas
 		task.wait(Config.DelayKembali)
-		
 		rootPart.CFrame = originalPos
 	end
 end
 
 local function setupMachine(machine)
-	if machine:GetAttribute("TrackedByV9") then return end
-	machine:SetAttribute("TrackedByV9", true)
+	if machine:GetAttribute("TrackedByV10") then return end
+	machine:SetAttribute("TrackedByV10", true)
 	table.insert(trackedMachines, machine)
 end
 
@@ -294,6 +332,7 @@ table.insert(connections, addedConn)
 
 task.spawn(function()
 	while isAutoRunning do
+		updateMachineStatusUI() -- 🌟 Update Teks Panel Mesin Setiap Detik
 		handleCoffeeDrinking()
 		
 		if countMyCoffee() < Config.MaxKopiDiTas then
@@ -310,4 +349,4 @@ task.spawn(function()
 	end
 end)
 
-print("☕ Auto-Coffee V9 Aktif! Fitur Auto-Unequip & Safe Teleport menyala.")
+print("☕ Auto-Coffee V10 Aktif! Live Dashboard menyala.")
