@@ -63,7 +63,7 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "ESP Analyzer v3 (RGB)"
+TitleText.Text = "ESP Analyzer v4 (Fixed)"
 TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 14
@@ -111,37 +111,46 @@ ToggleCorner.CornerRadius = UDim.new(0, 6)
 ToggleCorner.Parent = ToggleBtn
 
 -- ==========================================
--- LOGIKA ESP & ANALISA STATUS (MERAH/ORANYE/HIJAU)
+-- LOGIKA ESP & ANALISA STATUS (DIUPDATE UNTUK TALLMONSTER)
 -- ==========================================
 
--- Cek status NPC dan tentukan warna
 local function checkNpcStatus(npc)
 	local attr = npc:GetAttributes()
 	local reasons = {}
 	local isMonster = false
 	local isPenalty = false
+	
+	-- Tangkap nama NPC dan jadikan huruf kecil semua biar gampang dicek
+	local npcName = npc.Name or "Unknown"
+	local lowerName = string.lower(npcName)
 
-	-- Deteksi Monster Asli
+	-- 1. DETEKSI DARI NAMA (Mencegah monster tanpa atribut lolos)
+	if string.find(lowerName, "monster") then
+		table.insert(reasons, "Name=" .. npcName)
+		isMonster = true
+	end
+
+	-- 2. DETEKSI DARI ATRIBUT (Skinwalker, dll)
 	if attr.Skinwalker then table.insert(reasons, "Skinwalker"); isMonster = true end
 	if attr.SkinwalkerEasy then table.insert(reasons, "SkinwalkerEasy"); isMonster = true end
 	if attr.PhotoEffect == "CursedPhoto" then table.insert(reasons, "Photo1(Cursed)"); isMonster = true end
 	if attr.PhotoEffect2 == "CursedPhoto" then table.insert(reasons, "Photo2(Cursed)"); isMonster = true end
 
-	-- Deteksi Manusia Bermasalah (Salah Dokumen)
+	-- 3. DETEKSI MANUSIA BERMASALAH
 	if attr.PenaltyWhenLettingIn then 
 		table.insert(reasons, "PenaltyWhenLettingIn")
 		isPenalty = true 
 	end
 
-	-- Menentukan Warna dan Teks berdasarkan hasil deteksi
+	-- EKSEKUSI WARNA
 	if isMonster then
-		-- MERAH: Fix Monster / Anomali
+		-- Jika dia dicap sebagai monster (dari nama ATAU atribut) = MERAH
 		return table.concat(reasons, " | "), Color3.fromRGB(255, 70, 70) 
 	elseif isPenalty then
-		-- ORANYE: Manusia biasa tapi dokumennya salah
+		-- ORANYE
 		return "Dokumen Salah / Expired", Color3.fromRGB(255, 170, 0)
 	else
-		-- HIJAU: Manusia biasa & dokumen aman
+		-- HIJAU
 		return "Aman (Clear)", Color3.fromRGB(70, 255, 70)
 	end
 end
@@ -157,16 +166,16 @@ local function addEsp(npc, reasonText, espColor)
 	local root = npc.PrimaryPart or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
 	if not root then return end
 
-	-- Highlight dengan warna dinamis
+	-- Highlight
 	local highlight = Instance.new("Highlight")
 	highlight.Name = "PurityHighlight"
 	highlight.FillTransparency = 1
 	highlight.OutlineTransparency = 0
-	highlight.OutlineColor = espColor -- Warna dari fungsi checkNpcStatus
+	highlight.OutlineColor = espColor
 	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 	highlight.Parent = npc
 
-	-- Billboard Teks Detail
+	-- Billboard Teks
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "PurityESP"
 	billboard.Adornee = root
@@ -180,10 +189,9 @@ local function addEsp(npc, reasonText, espColor)
 	label.BackgroundTransparency = 1
 	label.Size = UDim2.fromScale(1, 1)
 	label.Font = Enum.Font.GothamBold
-	-- Teks Putih untuk alasan agar kontras, warna utama untuk Nama NPC
 	label.Text = "[ " .. (npc.Name or "Unknown") .. " ]\n<font size='12' color='#FFFFFF'>" .. reasonText .. "</font>"
 	label.RichText = true
-	label.TextColor3 = espColor -- Warna judul sesuai status
+	label.TextColor3 = espColor
 	label.TextStrokeTransparency = 0
 	label.TextScaled = false
 	label.TextSize = 14
@@ -192,7 +200,7 @@ end
 
 local function processNpc(npc)
 	if not npc:IsA("Model") then return end
-	if npc.Name:lower() == "doctor" then return end -- Abaikan NPC Dokter
+	if npc.Name:lower() == "doctor" then return end 
 
 	removeEsp(npc)
 
@@ -220,7 +228,7 @@ ToggleBtn.MouseButton1Click:Connect(function()
 		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
 		
 		_G.PurityESP_ChildConn = npcsFolder.ChildAdded:Connect(function(npc)
-			task.wait(0.5) -- Tunggu atribut di-load oleh game
+			task.wait(0.5) 
 			processNpc(npc)
 		end)
 	else
@@ -231,7 +239,6 @@ ToggleBtn.MouseButton1Click:Connect(function()
 			_G.PurityESP_ChildConn:Disconnect()
 		end
 	end
-	
 	refreshAllNPCs()
 end)
 
