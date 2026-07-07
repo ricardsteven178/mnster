@@ -1,0 +1,261 @@
+-- ==========================================
+-- ANTI DOUBLE EXECUTE & CLEANUP
+-- ==========================================
+if _G.PurityESP_Main then
+	_G.PurityESP_Main:Destroy()
+end
+if _G.PurityESP_ChildConn then
+	_G.PurityESP_ChildConn:Disconnect()
+end
+
+-- Variabel Utama
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local workspace = game:GetService("Workspace")
+
+local npcsFolder = workspace:WaitForChild("NPCs")
+local espEnabled = false
+
+-- Cari tempat aman buat taruh GUI
+local guiParent = (RunService:IsStudio() and Players.LocalPlayer:WaitForChild("PlayerGui")) or pcall(function() return CoreGui.RobloxGui end) and CoreGui or Players.LocalPlayer:WaitForChild("PlayerGui")
+
+-- ==========================================
+-- MEMBUAT GUI SEDERHANA
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AnomalyESPGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = guiParent
+_G.PurityESP_Main = ScreenGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 250, 0, 100)
+MainFrame.Position = UDim2.new(0.5, -125, 0.5, -50)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+
+local TitleCorner = Instance.new("UICorner")
+TitleCorner.CornerRadius = UDim.new(0, 8)
+TitleCorner.Parent = TitleBar
+
+local TitleCover = Instance.new("Frame")
+TitleCover.Size = UDim2.new(1, 0, 0, 10)
+TitleCover.Position = UDim2.new(0, 0, 1, -10)
+TitleCover.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TitleCover.BorderSizePixel = 0
+TitleCover.Parent = TitleBar
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -60, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "ESP Analyzer v3 (RGB)"
+TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 14
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+MinimizeBtn.Position = UDim2.new(1, -60, 0, 0)
+MinimizeBtn.BackgroundTransparency = 1
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 18
+MinimizeBtn.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 70, 70)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+CloseBtn.Parent = TitleBar
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -30)
+ContentFrame.Position = UDim2.new(0, 0, 0, 30)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 200, 0, 40)
+ToggleBtn.Position = UDim2.new(0.5, -100, 0.5, -20)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+ToggleBtn.Text = "ESP: OFF"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 16
+ToggleBtn.Parent = ContentFrame
+
+local ToggleCorner = Instance.new("UICorner")
+ToggleCorner.CornerRadius = UDim.new(0, 6)
+ToggleCorner.Parent = ToggleBtn
+
+-- ==========================================
+-- LOGIKA ESP & ANALISA STATUS (MERAH/ORANYE/HIJAU)
+-- ==========================================
+
+-- Cek status NPC dan tentukan warna
+local function checkNpcStatus(npc)
+	local attr = npc:GetAttributes()
+	local reasons = {}
+	local isMonster = false
+	local isPenalty = false
+
+	-- Deteksi Monster Asli
+	if attr.Skinwalker then table.insert(reasons, "Skinwalker"); isMonster = true end
+	if attr.SkinwalkerEasy then table.insert(reasons, "SkinwalkerEasy"); isMonster = true end
+	if attr.PhotoEffect == "CursedPhoto" then table.insert(reasons, "Photo1(Cursed)"); isMonster = true end
+	if attr.PhotoEffect2 == "CursedPhoto" then table.insert(reasons, "Photo2(Cursed)"); isMonster = true end
+
+	-- Deteksi Manusia Bermasalah (Salah Dokumen)
+	if attr.PenaltyWhenLettingIn then 
+		table.insert(reasons, "PenaltyWhenLettingIn")
+		isPenalty = true 
+	end
+
+	-- Menentukan Warna dan Teks berdasarkan hasil deteksi
+	if isMonster then
+		-- MERAH: Fix Monster / Anomali
+		return table.concat(reasons, " | "), Color3.fromRGB(255, 70, 70) 
+	elseif isPenalty then
+		-- ORANYE: Manusia biasa tapi dokumennya salah
+		return "Dokumen Salah / Expired", Color3.fromRGB(255, 170, 0)
+	else
+		-- HIJAU: Manusia biasa & dokumen aman
+		return "Aman (Clear)", Color3.fromRGB(70, 255, 70)
+	end
+end
+
+local function removeEsp(npc)
+	if npc:FindFirstChild("PurityHighlight") then npc.PurityHighlight:Destroy() end
+	if npc:FindFirstChild("PurityESP") then npc.PurityESP:Destroy() end
+end
+
+local function addEsp(npc, reasonText, espColor)
+	if npc:FindFirstChild("PurityHighlight") then return end
+
+	local root = npc.PrimaryPart or npc:FindFirstChild("HumanoidRootPart") or npc:FindFirstChildWhichIsA("BasePart")
+	if not root then return end
+
+	-- Highlight dengan warna dinamis
+	local highlight = Instance.new("Highlight")
+	highlight.Name = "PurityHighlight"
+	highlight.FillTransparency = 1
+	highlight.OutlineTransparency = 0
+	highlight.OutlineColor = espColor -- Warna dari fungsi checkNpcStatus
+	highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	highlight.Parent = npc
+
+	-- Billboard Teks Detail
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "PurityESP"
+	billboard.Adornee = root
+	billboard.AlwaysOnTop = true
+	billboard.Size = UDim2.fromOffset(250, 40)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+	billboard.MaxDistance = math.huge
+	billboard.Parent = npc
+
+	local label = Instance.new("TextLabel")
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.fromScale(1, 1)
+	label.Font = Enum.Font.GothamBold
+	-- Teks Putih untuk alasan agar kontras, warna utama untuk Nama NPC
+	label.Text = "[ " .. (npc.Name or "Unknown") .. " ]\n<font size='12' color='#FFFFFF'>" .. reasonText .. "</font>"
+	label.RichText = true
+	label.TextColor3 = espColor -- Warna judul sesuai status
+	label.TextStrokeTransparency = 0
+	label.TextScaled = false
+	label.TextSize = 14
+	label.Parent = billboard
+end
+
+local function processNpc(npc)
+	if not npc:IsA("Model") then return end
+	if npc.Name:lower() == "doctor" then return end -- Abaikan NPC Dokter
+
+	removeEsp(npc)
+
+	if espEnabled then
+		local reason, color = checkNpcStatus(npc)
+		addEsp(npc, reason, color)
+	end
+end
+
+local function refreshAllNPCs()
+	for _, npc in ipairs(npcsFolder:GetChildren()) do
+		processNpc(npc)
+	end
+end
+
+-- ==========================================
+-- FUNGSI TOMBOL GUI
+-- ==========================================
+
+ToggleBtn.MouseButton1Click:Connect(function()
+	espEnabled = not espEnabled
+	
+	if espEnabled then
+		ToggleBtn.Text = "ESP: ON"
+		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+		
+		_G.PurityESP_ChildConn = npcsFolder.ChildAdded:Connect(function(npc)
+			task.wait(0.5) -- Tunggu atribut di-load oleh game
+			processNpc(npc)
+		end)
+	else
+		ToggleBtn.Text = "ESP: OFF"
+		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		
+		if _G.PurityESP_ChildConn then
+			_G.PurityESP_ChildConn:Disconnect()
+		end
+	end
+	
+	refreshAllNPCs()
+end)
+
+local isMinimized = false
+MinimizeBtn.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	if isMinimized then
+		MainFrame.Size = UDim2.new(0, 250, 0, 30)
+		ContentFrame.Visible = false
+		MinimizeBtn.Text = "+"
+	else
+		MainFrame.Size = UDim2.new(0, 250, 0, 100)
+		ContentFrame.Visible = true
+		MinimizeBtn.Text = "-"
+	end
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+	espEnabled = false
+	refreshAllNPCs() 
+	if _G.PurityESP_ChildConn then
+		_G.PurityESP_ChildConn:Disconnect()
+	end
+	if _G.PurityESP_Main then
+		_G.PurityESP_Main:Destroy()
+	end
+end)
