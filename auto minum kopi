@@ -1,12 +1,16 @@
 -- ==========================================================
--- ☕ ULTIMATE AUTO-COFFEE V8 (BULLETPROOF / ANTI-ROBUX TRICK)
+-- ☕ ULTIMATE AUTO-COFFEE V9 (AUTO-UNEQUIP & SAFE TELEPORT)
 -- ==========================================================
 
+-- ==========================================
+-- ⚙️ AREA KONFIGURASI 
+-- ==========================================
 local Config = {
 	MaxKopiDiTas = 3,          
 	BatasMinum = 95,           
-	JedaMinum = 1,             
-	DelayTeleport = 0.2,       
+	JedaMinum = 1.5,           -- (Detik) Waktu tunggu per teguk
+	DelayTeleport = 0.5,       -- (Detik) Waktu diam di mesin SEBELUM menekan ambil
+	DelayKembali = 0.6,        -- (Detik) Waktu menunggu kopinya masuk tas SETELAH ditekan SEBELUM balik
 	TargetSanityUI = "amount"  
 }
 
@@ -21,7 +25,7 @@ local LocalPlayer = Players.LocalPlayer
 -- GUI SETUP
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoCoffeeUI_V8"
+ScreenGui.Name = "AutoCoffeeUI_V9"
 ScreenGui.Parent = CoreGui
 
 local MainFrame = Instance.new("Frame")
@@ -41,7 +45,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -70, 0, 30)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "☕ Auto-Coffee V8"
+Title.Text = "☕ Auto-Coffee V9"
 Title.TextColor3 = Color3.fromRGB(100, 255, 100)
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Font = Enum.Font.GothamBold
@@ -127,7 +131,7 @@ getgenv().KillAutoCoffee = function()
 	table.clear(trackedMachines)
 	if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
 	getgenv().KillAutoCoffee = nil
-	print("✅ [AUTO-COFFEE V8 MATI TOTAL]")
+	print("✅ [AUTO-COFFEE V9 MATI TOTAL]")
 end
 
 CloseBtnX.MouseButton1Click:Connect(function() getgenv().KillAutoCoffee() end)
@@ -170,20 +174,20 @@ local function getCurrentSanity()
 	return 100 
 end
 
-local function drinkCoffeeIfNeeded()
+local function handleCoffeeDrinking()
 	local currentSanity = getCurrentSanity()
 	local totalKopi = countMyCoffee()
 	
 	SanityStatus.Text = "🧠 Sanity: " .. currentSanity .. "% | Limit Tas: " .. Config.MaxKopiDiTas
 	FarmStatus.Text = "🎒 Stok Kopi: " .. totalKopi .. " / " .. Config.MaxKopiDiTas
 	
+	local character = LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	if not character or not humanoid or not backpack then return end
+
+	-- JIKA BUTUH MINUM
 	if currentSanity <= Config.BatasMinum then
-		local character = LocalPlayer.Character
-		local backpack = LocalPlayer:FindFirstChild("Backpack")
-		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-		
-		if not character or not humanoid or not backpack then return end
-		
 		local heldTool = nil
 		for _, item in pairs(character:GetChildren()) do
 			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
@@ -208,11 +212,20 @@ local function drinkCoffeeIfNeeded()
 			ActionLog.Text = "☕ Teguk Kopi! Sanity: " .. currentSanity .. "%"
 			task.wait(Config.JedaMinum) 
 		end
+	else
+		-- 🛡️ FITUR BARU: JIKA SANITY SUDAH AMAN, KEMBALIKAN KOPI KE TAS
+		for _, item in pairs(character:GetChildren()) do
+			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
+				humanoid:UnequipTools()
+				ActionLog.Text = "🎒 Kopi disimpan kembali ke tas."
+				break
+			end
+		end
 	end
 end
 
 -- ==========================================
--- LOGIKA TELEPORT & AMBIL KOPI (ANTI-ROBUX)
+-- LOGIKA TELEPORT & AMBIL KOPI (SAFE TELEPORT)
 -- ==========================================
 local coffeeStandCFrame = CFrame.new(-120.387688, 3.41253161, 8.78784466, -0.144494131, 3.65239181e-08, 0.989505649, -4.04447071e-08, 1, -4.28172804e-08, -0.989505649, -4.62071128e-08, -0.144494131)
 
@@ -220,48 +233,45 @@ local function takeCoffee(machine)
 	if not isAutoRunning then return end
 	if countMyCoffee() >= Config.MaxKopiDiTas then return end
 	
-	-- 🛡️ VALIDASI LAPIS 2: CEK TEKS UI (Wajib bilang "ready")
+	-- VALIDASI LAPIS 2: CEK TEKS UI
 	local statusUI = machine:FindFirstChild("Attachment") 
 		and machine.Attachment:FindFirstChild("UI") 
 		and machine.Attachment.UI:FindFirstChild("status")
 
 	if statusUI then
 		local cleanText = string.lower(string.gsub(statusUI.Text, "<[^>]+>", ""))
-		if not string.find(cleanText, "ready") then
-			ActionLog.Text = "⏳ UI belum 'ready', membatalkan ambil kopi."
-			return -- Batal ambil! Karena UI aslinya masih brewing/instant brew
-		end
+		if not string.find(cleanText, "ready") then return end
 	end
 
-	-- 🛡️ VALIDASI LAPIS 3: CEK PATH PROMPT AKURAT (Bukan Prompt Robux)
+	-- VALIDASI LAPIS 3: CEK PATH PROMPT AKURAT
 	local coffeeModel = machine:FindFirstChild("Coffee")
 	local prompt = coffeeModel and coffeeModel:FindFirstChild("PP")
 	
-	if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then
-		ActionLog.Text = "⚠️ Prompt Kopi Gratis belum muncul!"
-		return -- Batal ambil!
-	end
+	if not prompt or not prompt:IsA("ProximityPrompt") or not prompt.Enabled then return end
 
-	-- JIKA SEMUA VALIDASI LOLOS, BARU KITA TELEPORT & AMBIL
 	local character = LocalPlayer.Character
 	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 	
 	if rootPart then
 		local originalPos = rootPart.CFrame
 		rootPart.CFrame = coffeeStandCFrame
+		
+		-- ⏱️ Delay sebelum menekan prompt
 		task.wait(Config.DelayTeleport) 
 		
 		fireproximityprompt(prompt)
-		ActionLog.Text = "⚡ 100% Aman! Merampas Kopi dari " .. machine.Name
+		ActionLog.Text = "⚡ Mengambil Kopi dari " .. machine.Name
 		
-		task.wait(0.1)
+		-- ⏱️ Delay LEBIH LAMA setelah menekan prompt agar server sempat memasukkan kopi ke tas
+		task.wait(Config.DelayKembali)
+		
 		rootPart.CFrame = originalPos
 	end
 end
 
 local function setupMachine(machine)
-	if machine:GetAttribute("TrackedByV8") then return end
-	machine:SetAttribute("TrackedByV8", true)
+	if machine:GetAttribute("TrackedByV9") then return end
+	machine:SetAttribute("TrackedByV9", true)
 	table.insert(trackedMachines, machine)
 end
 
@@ -282,18 +292,15 @@ local addedConn = miscFolder.ChildAdded:Connect(function(obj)
 end)
 table.insert(connections, addedConn)
 
--- CORE LOOP (SISTEM RESTOCK AKTIF)
 task.spawn(function()
 	while isAutoRunning do
-		drinkCoffeeIfNeeded()
+		handleCoffeeDrinking()
 		
 		if countMyCoffee() < Config.MaxKopiDiTas then
 			for _, machine in ipairs(trackedMachines) do
-				-- 🛡️ VALIDASI LAPIS 1: Cek Atribut
 				if machine:GetAttribute("Brewing") == false then
 					takeCoffee(machine)
-					task.wait(1) -- Beri jeda 1 detik agar tidak spam
-					
+					task.wait(1) 
 					if countMyCoffee() >= Config.MaxKopiDiTas then break end
 				end
 			end
@@ -303,4 +310,4 @@ task.spawn(function()
 	end
 end)
 
-print("☕ Auto-Coffee V8 Aktif! Triple Check Anti-Robux sudah diaktifkan.")
+print("☕ Auto-Coffee V9 Aktif! Fitur Auto-Unequip & Safe Teleport menyala.")
