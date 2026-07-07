@@ -1,34 +1,30 @@
 -- ==========================================================
--- ☕ ULTIMATE AUTO-COFFEE V6 (SMART INVENTORY & AUTO-DRINK)
+-- ☕ ULTIMATE AUTO-COFFEE V7 (ACTIVE RESTOCK & ANTI-THIEF)
 -- ==========================================================
 
 -- ==========================================
--- ⚙️ AREA KONFIGURASI (SILAKAN DIATUR)
+-- ⚙️ AREA KONFIGURASI 
 -- ==========================================
 local Config = {
-	MaxKopiDiTas = 5,          -- Maksimal jumlah gelas kopi di inventory/tangan sebelum berhenti ngambil
-	BatasMinum = 95,           -- Script HANYA akan minum kopi jika sanity <= angka ini
-	JedaMinum = 1,             -- Waktu tunggu (detik) setelah minum 1 teguk
-	DelayTeleport = 0.2,       -- Kecepatan delay teleport saat merampas kopi (0.2 standar aman)
-	TargetSanityUI = "amount"  -- Nama UI TextLabel sanity kosongin aja aman
+	MaxKopiDiTas = 3,          
+	BatasMinum = 95,           
+	JedaMinum = 1,             
+	DelayTeleport = 0.2,       
+	TargetSanityUI = "amount"  
 }
 
--- 1. SISTEM ANTI-DOUBLE EXECUTE
-if getgenv().KillAutoCoffee then
-	getgenv().KillAutoCoffee()
-end
+if getgenv().KillAutoCoffee then getgenv().KillAutoCoffee() end
 
 local Players = game:GetService("Players")
 local workspace = game:GetService("Workspace")
-local RunService = game:GetService("RunService")
 local CoreGui = (gethui and gethui()) or game:GetService("CoreGui") or Players.LocalPlayer:WaitForChild("PlayerGui")
 local LocalPlayer = Players.LocalPlayer
 
 -- ==========================================
--- 2. GUI SETUP (DRAGGABLE, MINIMIZE, CLOSE X)
+-- GUI SETUP
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoCoffeeUI_V6"
+ScreenGui.Name = "AutoCoffeeUI_V7"
 ScreenGui.Parent = CoreGui
 
 local MainFrame = Instance.new("Frame")
@@ -48,7 +44,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -70, 0, 30)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "☕ Auto-Coffee V6"
+Title.Text = "☕ Auto-Coffee V7"
 Title.TextColor3 = Color3.fromRGB(100, 255, 100)
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Font = Enum.Font.GothamBold
@@ -95,7 +91,7 @@ local FarmStatus = Instance.new("TextLabel")
 FarmStatus.Size = UDim2.new(1, -20, 0, 25)
 FarmStatus.Position = UDim2.new(0, 10, 0, 25)
 FarmStatus.BackgroundTransparency = 1
-FarmStatus.Text = "🎒 Kopi di Tas: Membaca..."
+FarmStatus.Text = "🎒 Stok: Membaca..."
 FarmStatus.TextColor3 = Color3.fromRGB(200, 200, 200)
 FarmStatus.Font = Enum.Font.Gotham
 FarmStatus.TextSize = 11
@@ -123,6 +119,7 @@ end)
 
 local isAutoRunning = true
 local connections = {}
+local trackedMachines = {} -- Menyimpan daftar mesin yang aktif
 
 getgenv().KillAutoCoffee = function()
 	isAutoRunning = false
@@ -130,45 +127,35 @@ getgenv().KillAutoCoffee = function()
 		if conn and conn.Connected then conn:Disconnect() end
 	end
 	table.clear(connections)
+	table.clear(trackedMachines)
 	if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
 	getgenv().KillAutoCoffee = nil
-	print("✅ [AUTO-COFFEE V6 MATI TOTAL]")
+	print("✅ [AUTO-COFFEE V7 MATI TOTAL]")
 end
 
 CloseBtnX.MouseButton1Click:Connect(function() getgenv().KillAutoCoffee() end)
 
 -- ==========================================
--- FUNGSI PENGHITUNG KOPI DI TAS & TANGAN
+-- FUNGSI INVENTORY & SANITY
 -- ==========================================
 local function countMyCoffee()
 	local totalKopi = 0
 	local character = LocalPlayer.Character
 	local backpack = LocalPlayer:FindFirstChild("Backpack")
 	
-	-- 1. Hitung kopi yang disimpen di tas
 	if backpack then
 		for _, item in pairs(backpack:GetChildren()) do
-			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
-				totalKopi = totalKopi + 1
-			end
+			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then totalKopi += 1 end
 		end
 	end
-	
-	-- 2. Hitung kopi yang lagi dipegang (equip)
 	if character then
 		for _, item in pairs(character:GetChildren()) do
-			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
-				totalKopi = totalKopi + 1
-			end
+			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then totalKopi += 1 end
 		end
 	end
-	
 	return totalKopi
 end
 
--- ==========================================
--- FUNGSI BACA SANITY & AUTO-DRINK
--- ==========================================
 local function getCurrentSanity()
 	local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
 	if not PlayerGui then return 100 end
@@ -228,19 +215,15 @@ local function drinkCoffeeIfNeeded()
 end
 
 -- ==========================================
--- LOGIKA GHOST TELEPORT & AMBIL KOPI (AUTO-FARM)
+-- LOGIKA TELEPORT & AMBIL KOPI (AUTO-FARM)
 -- ==========================================
 local coffeeStandCFrame = CFrame.new(-120.387688, 3.41253161, 8.78784466, -0.144494131, 3.65239181e-08, 0.989505649, -4.04447071e-08, 1, -4.28172804e-08, -0.989505649, -4.62071128e-08, -0.144494131)
 
 local function takeCoffee(machine)
 	if not isAutoRunning then return end
 	
-	-- CEK DULU ISI TAS SEBELUM TELEPORT & AMBIL!
 	local totalKopi = countMyCoffee()
-	if totalKopi >= Config.MaxKopiDiTas then
-		ActionLog.Text = "🛑 Tas penuh (" .. totalKopi .. "/" .. Config.MaxKopiDiTas .. "). Biarkan mesin."
-		return -- Langsung batalkan eksekusi ngambil kopi
-	end
+	if totalKopi >= Config.MaxKopiDiTas then return end
 	
 	local character = LocalPlayer.Character
 	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
@@ -262,13 +245,11 @@ local function takeCoffee(machine)
 end
 
 local function setupMachine(machine)
-	if machine:GetAttribute("TrackedByV6") then return end
-	machine:SetAttribute("TrackedByV6", true)
+	if machine:GetAttribute("TrackedByV7") then return end
+	machine:SetAttribute("TrackedByV7", true)
+	table.insert(trackedMachines, machine) -- Masukkan ke daftar mesin yang dipantau
 
-	if machine:GetAttribute("Brewing") == false then
-		takeCoffee(machine)
-	end
-	
+	-- Event Listener (Ambil instan kalau pas lagi kosong)
 	local conn = machine:GetAttributeChangedSignal("Brewing"):Connect(function()
 		if machine:GetAttribute("Brewing") == false and isAutoRunning then
 			task.wait(0.5) 
@@ -296,11 +277,31 @@ local addedConn = miscFolder.ChildAdded:Connect(function(obj)
 end)
 table.insert(connections, addedConn)
 
+-- CORE LOOP (Mengecek Sanity & Hunting Kopi)
 task.spawn(function()
 	while isAutoRunning do
+		-- 1. Cek apakah perlu minum
 		drinkCoffeeIfNeeded()
+		
+		-- 2. SISTEM RESTOCK AKTIF (Anti Kecolongan)
+		if countMyCoffee() < Config.MaxKopiDiTas then
+			-- Scan seluruh mesin yang terdaftar
+			for _, machine in ipairs(trackedMachines) do
+				-- Kalau ada mesin yang kopinya nganggur (Brewing = false), langsung sikat!
+				if machine:GetAttribute("Brewing") == false then
+					takeCoffee(machine)
+					task.wait(0.5) -- Jeda biar nggak nabrak kalau 2 mesin ready bersamaan
+					
+					-- Cek lagi apakah tas sudah penuh setelah ngambil mesin pertama
+					if countMyCoffee() >= Config.MaxKopiDiTas then
+						break 
+					end
+				end
+			end
+		end
+		
 		task.wait(1) 
 	end
 end)
 
-print("☕ Auto-Coffee V6 Aktif! Smart Inventory, Auto-Drink, dan Auto-Farm siap.")
+print("☕ Auto-Coffee V7 Aktif! Sistem Restock Aktif siap berburu kopi nganggur.")
