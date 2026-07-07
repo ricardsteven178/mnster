@@ -5,18 +5,18 @@ local Config = {
 	ShowConsoleLogs = true, 
 	TeleportSebelumMelayani = true, 
 	
+	-- DEFAULT TAMPILAN RADAR (Saat pertama kali execute)
+	ShowRadar = true,
+	
 	-- RADAR 1 (CHECKIN 1) - Warna Biru Muda
-	ShowRadar1 = true,
 	RadarRadius1 = 5,
 	CenterPointRadar1 = CFrame.new(-105.94325256347656, 3.2688634395599365, -4.433233737945557),
 	
 	-- RADAR 2 (CHECKIN 2) - Warna Hijau Muda
-	ShowRadar2 = true,
 	RadarRadius2 = 5,
 	CenterPointRadar2 = CFrame.new(-94.84325408935547, 3.2688634395599365, 10.366765975952148),
 	
 	-- RADAR 3 (PRESS PROXIMITY / TAKE ITEM) - Warna Kuning
-	ShowRadar3 = true,
 	RadarRadius3 = 15,
 	CenterPointRadar3 = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967),
 	
@@ -30,8 +30,11 @@ local function logInfo(message)
 end
 
 -- ==========================================
--- ANTI DOUBLE EXECUTE & CLEANUP RADAR
+-- ANTI GHOST-LOOP (ID EKSEKUSI GLOBAL)
 -- ==========================================
+local ExecutionID = tick()
+_G.SmartCashier_ExecutionID = ExecutionID
+
 if _G.SmartCashier_Main then _G.SmartCashier_Main:Destroy() end
 if _G.SmartCashier_Radars then
 	for _, radar in pairs(_G.SmartCashier_Radars) do
@@ -50,7 +53,7 @@ local workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
 local autoCashierEnabled = false
-local isRadarVisible = false
+local isRadarVisible = Config.ShowRadar -- Membaca settingan default Config
 
 local guiParent = (RunService:IsStudio() and LocalPlayer:WaitForChild("PlayerGui")) or pcall(function() return CoreGui.RobloxGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 
@@ -86,10 +89,10 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -30, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "Smart Cashier v16.3"
+TitleText.Text = "Smart Cashier v17"
 TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 TitleText.Font = Enum.Font.GothamBold
-TitleText.TextSize = 13
+TitleText.TextSize = 14
 TitleText.TextXAlignment = Enum.TextXAlignment.Left
 TitleText.Parent = TitleBar
 
@@ -123,8 +126,14 @@ Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 6)
 local RadarBtn = Instance.new("TextButton")
 RadarBtn.Size = UDim2.new(0, 210, 0, 35)
 RadarBtn.Position = UDim2.new(0.5, -105, 0, 50)
-RadarBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-RadarBtn.Text = "SHOW RADAR: OFF"
+-- Setting tampilan tombol Radar sesuai config default
+if isRadarVisible then
+	RadarBtn.Text = "SHOW RADAR: ON"
+	RadarBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+else
+	RadarBtn.Text = "SHOW RADAR: OFF"
+	RadarBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+end
 RadarBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 RadarBtn.Font = Enum.Font.GothamBold
 RadarBtn.TextSize = 13
@@ -190,9 +199,8 @@ local function updateVisualRadar(id, pos, radius, color, isVisible)
 		_G.SmartCashier_Radars[id] = radar
 	end
 	
-	-- Sedikit dipertebal (0.1) dan di-offset agar terhindar 100% dari lantai
 	radar.Size = Vector3.new(0.1, radius * 2, radius * 2)
-	radar.CFrame = CFrame.new(pos.X, pos.Y - 3.1, pos.Z) * CFrame.Angles(0, 0, math.rad(90))
+	radar.CFrame = CFrame.new(pos.X, pos.Y - 1.45, pos.Z) * CFrame.Angles(0, 0, math.rad(90))
 end
 
 local function firePrompt(prompt)
@@ -252,29 +260,54 @@ local function getClosestCounter(npc)
 	if d2 < d1 and checkIn2 then return checkIn2 else return checkIn1 end
 end
 
+-- [FUNGSI BARU] Mencari posisi asli dari ProximityPrompt (Tembus Attachment, Tool, atau Model)
+local function getPromptPosition(prompt)
+	local currentParent = prompt.Parent
+	while currentParent do
+		if currentParent:IsA("BasePart") or currentParent:IsA("Model") or currentParent:IsA("Tool") then
+			local success, pos = pcall(function() return currentParent:GetPivot().Position end)
+			if success then return pos end
+		end
+		currentParent = currentParent.Parent
+	end
+	return nil
+end
+
 local function getActiveDeskPrompt(counter)
 	if not counter then return nil, nil end
 	local checkIn1 = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn")
 	
+	-- 1. Take Item (Bypass Full Tas & Sistem Lacak Tingkat Tinggi)
 	for _, desc in ipairs(workspace:GetDescendants()) do
 		if desc:IsA("ProximityPrompt") and desc.Enabled then
 			local txt = string.lower(desc.ActionText)
 			if string.match(txt, "take") and not string.match(txt, "photo") then
-				if desc.Parent and desc.Parent:IsA("BasePart") then
-					if (desc.Parent.Position - Config.CenterPointRadar3.Position).Magnitude <= Config.RadarRadius3 then
+				local pos = getPromptPosition(desc)
+				if pos then
+					if (pos - Config.CenterPointRadar3.Position).Magnitude <= Config.RadarRadius3 then
 						return desc, "Take Item"
 					end
+				else
+					-- Jika posisinya gaib (tidak terdeteksi), tetap sikat!
+					return desc, "Take Item" 
 				end
 			end
 		end
 	end
 	
+	-- 2. Print Badge
 	local printPP = checkIn1 and checkIn1:FindFirstChild("Printer") and checkIn1.Printer:FindFirstChild("PP")
 	if printPP and printPP.Enabled then return printPP, "Print Badge" end
+	
+	-- 3. Register Computer
 	local compPP = checkIn1 and checkIn1:FindFirstChild("Computer") and checkIn1.Computer:FindFirstChild("PP")
 	if compPP and compPP.Enabled then return compPP, "Register" end
+	
+	-- 4. Take Photo
 	local camPP = counter:FindFirstChild("Camera") and counter.Camera:FindFirstChild("PP")
 	if camPP and camPP.Enabled then return camPP, "Take Photo" end
+	
+	-- 5. Stamp Form
 	local formPP = counter:FindFirstChild("Form") and counter.Form:FindFirstChild("PP")
 	if formPP and formPP.Enabled then return formPP, "Stamp Form" end
 	
@@ -282,25 +315,21 @@ local function getActiveDeskPrompt(counter)
 end
 
 -- ==========================================
--- LOOP UTAMA (INDEPENDENT DASHBOARD)
+-- LOOP UTAMA
 -- ==========================================
 task.spawn(function()
-	logInfo("Mesin V16.3 Aktif! Anti Ghost-Loop Diterapkan.")
+	logInfo("Mesin V17 Aktif! Anti Ghost-Loop & Smart Radar.")
 	
 	while task.wait(0.5) do
-		-- [PENGAMAN GHOST LOOP] - Jika GUI mati (execute ulang), matikan siklus loop ini selamanya
-		if not ScreenGui or not ScreenGui.Parent then
+		-- [PEMBUNUH GHOST LOOP] - Jika ada script baru yang di-execute, matikan loop lama selamanya!
+		if _G.SmartCashier_ExecutionID ~= ExecutionID then
 			break
 		end
 
 		pcall(function()
-			local showR1 = isRadarVisible and Config.ShowRadar1
-			local showR2 = isRadarVisible and Config.ShowRadar2
-			local showR3 = isRadarVisible and Config.ShowRadar3
-			
-			updateVisualRadar("Radar1", Config.CenterPointRadar1.Position, Config.RadarRadius1, Color3.fromRGB(0, 255, 255), showR1) 
-			updateVisualRadar("Radar2", Config.CenterPointRadar2.Position, Config.RadarRadius2, Color3.fromRGB(0, 255, 100), showR2) 
-			updateVisualRadar("Radar3", Config.CenterPointRadar3.Position, Config.RadarRadius3, Color3.fromRGB(255, 255, 0), showR3)  
+			updateVisualRadar("Radar1", Config.CenterPointRadar1.Position, Config.RadarRadius1, Color3.fromRGB(0, 255, 255), isRadarVisible) 
+			updateVisualRadar("Radar2", Config.CenterPointRadar2.Position, Config.RadarRadius2, Color3.fromRGB(0, 255, 100), isRadarVisible) 
+			updateVisualRadar("Radar3", Config.CenterPointRadar3.Position, Config.RadarRadius3, Color3.fromRGB(255, 255, 0), isRadarVisible)  
 		end)
 
 		local normalNPCs = {}
@@ -449,4 +478,7 @@ CloseBtn.MouseButton1Click:Connect(function()
 			if radar then radar:Destroy() end
 		end
 	end
+	
+	-- Putus eksekusi background jika ditutup
+	_G.SmartCashier_ExecutionID = nil 
 end)
