@@ -1,0 +1,306 @@
+-- ==========================================================
+-- ☕ ULTIMATE AUTO-COFFEE V6 (SMART INVENTORY & AUTO-DRINK)
+-- ==========================================================
+
+-- ==========================================
+-- ⚙️ AREA KONFIGURASI (SILAKAN DIATUR)
+-- ==========================================
+local Config = {
+	MaxKopiDiTas = 5,          -- Maksimal jumlah gelas kopi di inventory/tangan sebelum berhenti ngambil
+	BatasMinum = 95,           -- Script HANYA akan minum kopi jika sanity <= angka ini
+	JedaMinum = 1,             -- Waktu tunggu (detik) setelah minum 1 teguk
+	DelayTeleport = 0.2,       -- Kecepatan delay teleport saat merampas kopi (0.2 standar aman)
+	TargetSanityUI = "amount"  -- Nama UI TextLabel sanity kosongin aja aman
+}
+
+-- 1. SISTEM ANTI-DOUBLE EXECUTE
+if getgenv().KillAutoCoffee then
+	getgenv().KillAutoCoffee()
+end
+
+local Players = game:GetService("Players")
+local workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local CoreGui = (gethui and gethui()) or game:GetService("CoreGui") or Players.LocalPlayer:WaitForChild("PlayerGui")
+local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- 2. GUI SETUP (DRAGGABLE, MINIMIZE, CLOSE X)
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AutoCoffeeUI_V6"
+ScreenGui.Parent = CoreGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 260, 0, 110)
+MainFrame.Position = UDim2.new(0.5, -130, 0, 20)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 18, 22)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true 
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, -70, 0, 30)
+Title.Position = UDim2.new(0, 10, 0, 0)
+Title.BackgroundTransparency = 1
+Title.Text = "☕ Auto-Coffee V6"
+Title.TextColor3 = Color3.fromRGB(100, 255, 100)
+Title.TextXAlignment = Enum.TextXAlignment.Left
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.Parent = MainFrame
+
+local MinButton = Instance.new("TextButton")
+MinButton.Size = UDim2.new(0, 30, 0, 30)
+MinButton.Position = UDim2.new(1, -60, 0, 0)
+MinButton.BackgroundTransparency = 1
+MinButton.Text = "-"
+MinButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinButton.TextSize = 20
+MinButton.Font = Enum.Font.GothamBold
+MinButton.Parent = MainFrame
+
+local CloseBtnX = Instance.new("TextButton")
+CloseBtnX.Size = UDim2.new(0, 30, 0, 30)
+CloseBtnX.Position = UDim2.new(1, -30, 0, 0)
+CloseBtnX.BackgroundTransparency = 1
+CloseBtnX.Text = "X"
+CloseBtnX.TextColor3 = Color3.fromRGB(255, 80, 80)
+CloseBtnX.TextSize = 16
+CloseBtnX.Font = Enum.Font.GothamBold
+CloseBtnX.Parent = MainFrame
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -30)
+ContentFrame.Position = UDim2.new(0, 0, 0, 30)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+local SanityStatus = Instance.new("TextLabel")
+SanityStatus.Size = UDim2.new(1, -20, 0, 25)
+SanityStatus.Position = UDim2.new(0, 10, 0, 0)
+SanityStatus.BackgroundTransparency = 1
+SanityStatus.Text = "🧠 Sanity: Membaca..."
+SanityStatus.TextColor3 = Color3.fromRGB(255, 200, 100)
+SanityStatus.Font = Enum.Font.GothamBold
+SanityStatus.TextSize = 12
+SanityStatus.Parent = ContentFrame
+
+local FarmStatus = Instance.new("TextLabel")
+FarmStatus.Size = UDim2.new(1, -20, 0, 25)
+FarmStatus.Position = UDim2.new(0, 10, 0, 25)
+FarmStatus.BackgroundTransparency = 1
+FarmStatus.Text = "🎒 Kopi di Tas: Membaca..."
+FarmStatus.TextColor3 = Color3.fromRGB(200, 200, 200)
+FarmStatus.Font = Enum.Font.Gotham
+FarmStatus.TextSize = 11
+FarmStatus.Parent = ContentFrame
+
+local ActionLog = Instance.new("TextLabel")
+ActionLog.Size = UDim2.new(1, -20, 0, 25)
+ActionLog.Position = UDim2.new(0, 10, 0, 50)
+ActionLog.BackgroundTransparency = 1
+ActionLog.Text = "-"
+ActionLog.TextColor3 = Color3.fromRGB(150, 200, 255)
+ActionLog.Font = Enum.Font.Gotham
+ActionLog.TextSize = 11
+ActionLog.Parent = ContentFrame
+
+-- ==========================================
+-- LOGIKA UI & KILL SWITCH
+-- ==========================================
+local isMinimized = false
+MinButton.MouseButton1Click:Connect(function()
+	isMinimized = not isMinimized
+	ContentFrame.Visible = not isMinimized
+	MainFrame.Size = isMinimized and UDim2.new(0, 260, 0, 30) or UDim2.new(0, 260, 0, 110)
+end)
+
+local isAutoRunning = true
+local connections = {}
+
+getgenv().KillAutoCoffee = function()
+	isAutoRunning = false
+	for _, conn in ipairs(connections) do
+		if conn and conn.Connected then conn:Disconnect() end
+	end
+	table.clear(connections)
+	if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
+	getgenv().KillAutoCoffee = nil
+	print("✅ [AUTO-COFFEE V6 MATI TOTAL]")
+end
+
+CloseBtnX.MouseButton1Click:Connect(function() getgenv().KillAutoCoffee() end)
+
+-- ==========================================
+-- FUNGSI PENGHITUNG KOPI DI TAS & TANGAN
+-- ==========================================
+local function countMyCoffee()
+	local totalKopi = 0
+	local character = LocalPlayer.Character
+	local backpack = LocalPlayer:FindFirstChild("Backpack")
+	
+	-- 1. Hitung kopi yang disimpen di tas
+	if backpack then
+		for _, item in pairs(backpack:GetChildren()) do
+			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
+				totalKopi = totalKopi + 1
+			end
+		end
+	end
+	
+	-- 2. Hitung kopi yang lagi dipegang (equip)
+	if character then
+		for _, item in pairs(character:GetChildren()) do
+			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
+				totalKopi = totalKopi + 1
+			end
+		end
+	end
+	
+	return totalKopi
+end
+
+-- ==========================================
+-- FUNGSI BACA SANITY & AUTO-DRINK
+-- ==========================================
+local function getCurrentSanity()
+	local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
+	if not PlayerGui then return 100 end
+	
+	local amountUI = PlayerGui:FindFirstChild("Sanity")
+		and PlayerGui.Sanity:FindFirstChild("Frame")
+		and PlayerGui.Sanity.Frame:FindFirstChild("Frame")
+		and PlayerGui.Sanity.Frame.Frame:FindFirstChild("textbox")
+		and PlayerGui.Sanity.Frame.Frame.textbox:FindFirstChild(Config.TargetSanityUI)
+		
+	if amountUI then
+		local num = tonumber(string.match(amountUI.Text, "%d+"))
+		return num or 100
+	end
+	return 100 
+end
+
+local function drinkCoffeeIfNeeded()
+	local currentSanity = getCurrentSanity()
+	local totalKopi = countMyCoffee()
+	
+	SanityStatus.Text = "🧠 Sanity: " .. currentSanity .. "% | Limit Tas: " .. Config.MaxKopiDiTas
+	FarmStatus.Text = "🎒 Stok Kopi: " .. totalKopi .. " / " .. Config.MaxKopiDiTas
+	
+	if currentSanity <= Config.BatasMinum then
+		local character = LocalPlayer.Character
+		local backpack = LocalPlayer:FindFirstChild("Backpack")
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+		
+		if not character or not humanoid or not backpack then return end
+		
+		local heldTool = nil
+		for _, item in pairs(character:GetChildren()) do
+			if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
+				heldTool = item
+				break
+			end
+		end
+		
+		if not heldTool then
+			for _, item in pairs(backpack:GetChildren()) do
+				if item:IsA("Tool") and string.find(string.lower(item.Name), "coffee") then
+					humanoid:EquipTool(item)
+					heldTool = item
+					task.wait(0.2) 
+					break
+				end
+			end
+		end
+		
+		if heldTool then
+			heldTool:Activate() 
+			ActionLog.Text = "☕ Teguk Kopi! Sanity: " .. currentSanity .. "%"
+			task.wait(Config.JedaMinum) 
+		end
+	end
+end
+
+-- ==========================================
+-- LOGIKA GHOST TELEPORT & AMBIL KOPI (AUTO-FARM)
+-- ==========================================
+local coffeeStandCFrame = CFrame.new(-120.387688, 3.41253161, 8.78784466, -0.144494131, 3.65239181e-08, 0.989505649, -4.04447071e-08, 1, -4.28172804e-08, -0.989505649, -4.62071128e-08, -0.144494131)
+
+local function takeCoffee(machine)
+	if not isAutoRunning then return end
+	
+	-- CEK DULU ISI TAS SEBELUM TELEPORT & AMBIL!
+	local totalKopi = countMyCoffee()
+	if totalKopi >= Config.MaxKopiDiTas then
+		ActionLog.Text = "🛑 Tas penuh (" .. totalKopi .. "/" .. Config.MaxKopiDiTas .. "). Biarkan mesin."
+		return -- Langsung batalkan eksekusi ngambil kopi
+	end
+	
+	local character = LocalPlayer.Character
+	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+	
+	if rootPart then
+		local originalPos = rootPart.CFrame
+		rootPart.CFrame = coffeeStandCFrame
+		task.wait(Config.DelayTeleport) 
+		
+		local prompt = machine:FindFirstChild("PP", true)
+		if prompt and prompt:IsA("ProximityPrompt") then
+			fireproximityprompt(prompt)
+			ActionLog.Text = "⚡ Merampas Kopi dari " .. machine.Name
+		end
+		
+		task.wait(0.1)
+		rootPart.CFrame = originalPos
+	end
+end
+
+local function setupMachine(machine)
+	if machine:GetAttribute("TrackedByV6") then return end
+	machine:SetAttribute("TrackedByV6", true)
+
+	if machine:GetAttribute("Brewing") == false then
+		takeCoffee(machine)
+	end
+	
+	local conn = machine:GetAttributeChangedSignal("Brewing"):Connect(function()
+		if machine:GetAttribute("Brewing") == false and isAutoRunning then
+			task.wait(0.5) 
+			takeCoffee(machine)
+		end
+	end)
+	
+	table.insert(connections, conn)
+end
+
+-- ==========================================
+-- EKSEKUSI LOOP & SCANNER
+-- ==========================================
+local miscFolder = workspace:WaitForChild("Misc")
+
+for _, obj in pairs(miscFolder:GetChildren()) do
+	if string.find(obj.Name, "CoffeeMachine") then setupMachine(obj) end
+end
+
+local addedConn = miscFolder.ChildAdded:Connect(function(obj)
+	if isAutoRunning and string.find(obj.Name, "CoffeeMachine") then
+		task.wait(1) 
+		setupMachine(obj)
+	end
+end)
+table.insert(connections, addedConn)
+
+task.spawn(function()
+	while isAutoRunning do
+		drinkCoffeeIfNeeded()
+		task.wait(1) 
+	end
+end)
+
+print("☕ Auto-Coffee V6 Aktif! Smart Inventory, Auto-Drink, dan Auto-Farm siap.")
