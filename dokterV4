@@ -2,7 +2,8 @@
 -- ANTI DOUBLE EXECUTE & CLEANUP
 -- ==========================================
 if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end
-if _G.AutoDoctor_Loop then task.cancel(_G.AutoDoctor_Loop) end
+if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
+if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
 
 -- ==========================================
 -- CONFIGURATION & KOORDINAT AMAN ROOM
@@ -14,6 +15,7 @@ local Config = {
     MaxInventory = 3,         
     ScanDelay = 5,
     StuckTimeout = 20,        
+    GlobalStuckTimeout = 45,  -- [ BARU ]: Jika bot diam > 45 detik tanpa interaksi, AUTO HARD-RESET!
     IdleCFrame = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967)
 }
 
@@ -42,6 +44,7 @@ local LocalPlayer = Players.LocalPlayer
 
 local isBusy = false
 local autoScanEnabled = false
+_G.AutoDoctor_LastActionTick = tick() -- Global Tracker untuk Watchdog
 
 local guiParent = (RunService:IsStudio() and LocalPlayer:WaitForChild("PlayerGui")) or pcall(function() return CoreGui.RobloxGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 local ScreenGui = Instance.new("ScreenGui")
@@ -79,7 +82,7 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "Auto Doctor v30"
+TitleText.Text = "Auto Doctor v31"
 TitleText.TextColor3 = Color3.fromRGB(0, 255, 150)
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 14
@@ -157,7 +160,6 @@ local function setStatus(text)
     end
 end
 
--- [ FITUR BARU V30 ]: DETEKSI SHIFT BERUBAH BERDASARKAN TEKS (Misal: Shift 8 -> Shift 9)
 local function getShiftText()
     local pGui = LocalPlayer:FindFirstChild("PlayerGui")
     if pGui then
@@ -273,7 +275,7 @@ local function trashItem(toolToTrash)
     if trashBin then
         local prompt = trashBin:FindFirstChild("PP") or trashBin:FindFirstChildWhichIsA("ProximityPrompt", true)
         if prompt and prompt:IsA("ProximityPrompt") then
-            setStatus("Kapasitas penuh! Membuang: " .. toolToTrash.Name)
+            setStatus("Membuang item penuh: " .. toolToTrash.Name)
             humanoid:EquipTool(toolToTrash)
             task.wait(0.2)
             
@@ -294,6 +296,7 @@ local function trashItem(toolToTrash)
             if type(fireproximityprompt) == "function" then fireproximityprompt(prompt, 1, true)
             else prompt:InputHoldBegan() task.wait(0.1) prompt:InputHoldEnded() end
             
+            _G.AutoDoctor_LastActionTick = tick() -- UPDATE WATCHDOG
             task.wait(Config.WaitTime)
             return true
         end
@@ -333,6 +336,7 @@ local function fetchItem(targetName)
                 if type(fireproximityprompt) == "function" then fireproximityprompt(prompt, 1, true)
                 else prompt:InputHoldBegan() task.wait(0.1) prompt:InputHoldEnded() end
                 
+                _G.AutoDoctor_LastActionTick = tick() -- UPDATE WATCHDOG
                 task.wait(Config.WaitTime)
                 setStatus("BERHASIL DIAMBIL: " .. targetName)
                 break 
@@ -362,6 +366,7 @@ local function simpleInteract(prompt, customHold)
             prompt:InputHoldEnded()
         end
         
+        _G.AutoDoctor_LastActionTick = tick() -- UPDATE WATCHDOG
         prompt.RequiresLineOfSight = oldReq
         prompt.MaxActivationDistance = oldDist
         task.wait(Config.WaitTime)
@@ -369,22 +374,43 @@ local function simpleInteract(prompt, customHold)
     return true
 end
 
+-- [ V31 FIX ]: X-RAY PASIEN (Cek Fisik Pasien di Kasur)
 local function findActiveRoom()
     local roomsFolder = workspace:FindFirstChild("Rooms")
     local medicalFolder = roomsFolder and roomsFolder:FindFirstChild("Medical")
     if not medicalFolder then return nil end
 
     for i = 1, Config.MaxRooms do
-        local roomName = "Room" .. i
-        local room = medicalFolder:FindFirstChild(roomName)
+        local room = medicalFolder:FindFirstChild("Room" .. i)
         if room then
-            local signLight = room:FindFirstChild("MainSign") and room.MainSign:FindFirstChild("Light")
-            if signLight and signLight:IsA("BasePart") then
-                if signLight.BrickColor.Name == "Crimson" or signLight.Color == Color3.fromRGB(165, 0, 0) then
-                    local minigame = room:FindFirstChild("Minigame")
-                    if not isHealingDone(minigame) then
-                        return room
+            local minigame = room:FindFirstChild("Minigame")
+            local bed = minigame and minigame:FindFirstChild("Bed") and minigame.Bed:FindFirstChild("InBed")
+            local bedPart = bed and (bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart"))
+            
+            if not isHealingDone(minigame) then
+                -- Syarat 1: Lampu Kamar Merah
+                local signLight = room:FindFirstChild("MainSign") and room.MainSign:FindFirstChild("Light")
+                local isLightRed = signLight and (signLight.BrickColor.Name == "Crimson" or signLight.Color == Color3.fromRGB(165, 0, 0))
+                
+                -- Syarat 2: Ada Fisik NPC Normal rebahan di Kasur
+                local hasPhysicalPatient = false
+                if bedPart and workspace:FindFirstChild("NPCs") then
+                    for _, npc in ipairs(workspace.NPCs:GetChildren()) do
+                        local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+                        if part and (part.Position - bedPart.Position).Magnitude < 15 then
+                            -- Pastikan dia bukan pasien yang pingsan belum diangkut
+                            local pp = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if not (pp and (pp.Name == "FaintedPP" or (pp.ActionText and pp.ActionText:match("Carry")))) then
+                                hasPhysicalPatient = true
+                                break
+                            end
+                        end
                     end
+                end
+
+                -- Jika lampu merah ATAU ada fisik pasien di kasur, GAS!
+                if isLightRed or hasPhysicalPatient then
+                    return room
                 end
             end
         end
@@ -413,13 +439,11 @@ local function getFaintedPatient()
     return nil, nil
 end
 
-local function processFaintedPatient(faintedPart, carryPP, activeShift)
+local function processFaintedPatient(faintedPart, carryPP)
     setStatus("! PRIORITAS: Mengurus Pasien Pingsan !")
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if not root or not faintedPart then return end
-
-    if getShiftText() ~= activeShift then return end
 
     setStatus("Menggendong pasien...")
     local primPart = faintedPart.PrimaryPart or faintedPart:FindFirstChildWhichIsA("BasePart")
@@ -434,9 +458,9 @@ local function processFaintedPatient(faintedPart, carryPP, activeShift)
 
     local targetRoom = findActiveRoom()
     while not targetRoom do
-        if getShiftText() ~= activeShift then return end
-        setStatus("Pingsan digendong. Menunggu kamar merah...")
+        setStatus("Pingsan digendong. Menunggu kamar kosong...")
         task.wait(1.5)
+        _G.AutoDoctor_LastActionTick = tick() -- Biar Watchdog ga bunuh script pas nunggu kamar
         targetRoom = findActiveRoom()
     end
 
@@ -447,7 +471,6 @@ local function processFaintedPatient(faintedPart, carryPP, activeShift)
     local placeLimit = 0
     local placed = false
     while placeLimit < 20 and not placed do
-        if getShiftText() ~= activeShift then return end
         local placePP = nil
         for _, desc in ipairs(targetRoom:GetDescendants()) do
             if desc:IsA("ProximityPrompt") then
@@ -479,12 +502,12 @@ local function processFaintedPatient(faintedPart, carryPP, activeShift)
     end
 end
 
-local function executeTreatmentCore(roomPath, activeShift)
+local function executeTreatmentCore(roomPath)
     local minigame = roomPath:FindFirstChild("Minigame")
     if not minigame then return end
     
     local roomNum = tonumber(roomPath.Name:match("%d+"))
-    if isHealingDone(minigame) or getShiftText() ~= activeShift then return end
+    if isHealingDone(minigame) then return end
 
     local tvUI = minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen", true)
     
@@ -500,12 +523,10 @@ local function executeTreatmentCore(roomPath, activeShift)
     local waitLimit = 0
     
     while not targetNPC and waitLimit < 20 do
-        if getShiftText() ~= activeShift then return end
-        
         if workspace:FindFirstChild("NPCs") then
             for _, npc in ipairs(workspace.NPCs:GetChildren()) do
                 local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
-                if part and bedPart and (part.Position - bedPart.Position).Magnitude < 40 then
+                if part and bedPart and (part.Position - bedPart.Position).Magnitude < 15 then
                     targetNPC = npc
                     break
                 end
@@ -537,7 +558,7 @@ local function executeTreatmentCore(roomPath, activeShift)
             setStatus("DNA sudah diambil (Lanjut)...")
         end
 
-        if isHealingDone(minigame) or getShiftText() ~= activeShift then return end
+        if isHealingDone(minigame) then return end
 
         setStatus("2/5 Cek Mesin Analyzer...")
         local analyzer = minigame:FindFirstChild("Analyzer")
@@ -545,7 +566,7 @@ local function executeTreatmentCore(roomPath, activeShift)
             simpleInteract(analyzer.PP, 0.5)
         end
 
-        if isHealingDone(minigame) or getShiftText() ~= activeShift then return end
+        if isHealingDone(minigame) then return end
 
         setStatus("3/5 Cek Monitor...")
         local monitor = minigame:FindFirstChild("Monitor")
@@ -556,20 +577,19 @@ local function executeTreatmentCore(roomPath, activeShift)
         setStatus("Smart Co-op: Tahap 1-3 di-skip. Langsung ambil obat!")
     end
 
-    if isHealingDone(minigame) or getShiftText() ~= activeShift then return end
+    if isHealingDone(minigame) then return end
 
     setStatus("4/5 Membaca Kebutuhan dari TV...")
     if tvUI and tvUI:FindFirstChild("inv", true) then
         local invFolder = tvUI:FindFirstChild("inv", true)
         local waitLimitTV = 0
         while #invFolder:GetChildren() <= 1 and waitLimitTV < 15 do
-            if getShiftText() ~= activeShift then return end
             task.wait(0.5)
             waitLimitTV = waitLimitTV + 1
         end
     end
 
-    if isHealingDone(minigame) or getShiftText() ~= activeShift then return end
+    if isHealingDone(minigame) then return end
 
     -- 5. Eksekusi Treatment 
     if patientIsAnomaly then
@@ -601,17 +621,6 @@ local function executeTreatmentCore(roomPath, activeShift)
         local lastPendingCount = -1
 
         while true do
-            if getShiftText() ~= activeShift then 
-                setStatus("Shift berganti! Membatalkan pengobatan.")
-                break 
-            end
-
-            local signLight = roomPath:FindFirstChild("MainSign") and roomPath.MainSign:FindFirstChild("Light")
-            if not signLight or (signLight.BrickColor.Name ~= "Crimson" and signLight.Color ~= Color3.fromRGB(165, 0, 0)) then
-                setStatus("FAILSAFE: Lampu mati. Batal.")
-                break
-            end
-            
             if isHealingDone(minigame) then
                 setStatus("Layar Healing menyala! Selesai.")
                 break
@@ -625,7 +634,7 @@ local function executeTreatmentCore(roomPath, activeShift)
             end
 
             if tick() - lastProgressTime >= Config.StuckTimeout then
-                setStatus("AUTO-RESET: Stuck " .. Config.StuckTimeout .. " detik. Skip.")
+                setStatus("Loop Stuck " .. Config.StuckTimeout .. " detik. Skip ruangan ini.")
                 break
             end
 
@@ -673,48 +682,54 @@ local function executeTreatmentCore(roomPath, activeShift)
                 task.wait(2)
             end
         end
-        if getShiftText() == activeShift then setStatus("--- PROSES SELESAI ---") end
+        setStatus("--- PROSES SELESAI ---")
     end
     task.wait(1)
 end
 
 -- ==========================================
--- SAFE MAIN EXECUTOR
+-- SAFE MAIN EXECUTOR (WORKER THREAD)
 -- ==========================================
 local function botCycle()
-    local activeShift = getShiftText()
-    
-    -- Jika teks UI Shift tidak ada, kemungkinan gamenya lagi di masa jeda/istirahat
-    if not activeShift then
-        teleportToIdle()
-        setStatus("Menunggu shift dimulai (Istirahat)...")
-        task.wait(2)
-        return
-    end
-
     local faintedPart, carryPP = getFaintedPatient()
     if faintedPart then
         _G.TreatingFainted = false
-        pcall(function() processFaintedPatient(faintedPart, carryPP, activeShift) end)
+        pcall(function() processFaintedPatient(faintedPart, carryPP) end)
         
-        if _G.TreatingFainted and getShiftText() == activeShift then
+        if _G.TreatingFainted then
             local room = findActiveRoom()
-            if room then pcall(function() executeTreatmentCore(room, activeShift) end) end
+            if room then pcall(function() executeTreatmentCore(room) end) end
         end
     else
         local room = findActiveRoom()
         if room then 
-            pcall(function() executeTreatmentCore(room, activeShift) end)
+            pcall(function() executeTreatmentCore(room) end)
         else
             teleportToIdle()
-            setStatus("Idle (Memantau " .. activeShift .. ")...")
+            setStatus("Idle (Standby di Base)...")
             task.wait(Config.ScanDelay)
         end
     end
 end
 
+local function startWorker()
+    if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
+    _G.AutoDoctor_Worker = task.spawn(function()
+        while autoScanEnabled do
+            if not isBusy then
+                isBusy = true
+                _G.AutoDoctor_LastActionTick = tick() -- Reset watchdog saat mulai cycle
+                pcall(botCycle)
+                isBusy = false
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
 -- ==========================================
--- GUI BUTTON EVENTS
+-- GUI BUTTON EVENTS & THE WATCHDOG
 -- ==========================================
 local isMinimized = false
 MinimizeBtn.MouseButton1Click:Connect(function()
@@ -731,7 +746,9 @@ MinimizeBtn.MouseButton1Click:Connect(function()
 end)
 
 CloseBtn.MouseButton1Click:Connect(function()
-    if _G.AutoDoctor_Loop then task.cancel(_G.AutoDoctor_Loop) end
+    autoScanEnabled = false
+    if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
+    if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
     ScreenGui:Destroy()
 end)
 
@@ -746,9 +763,7 @@ ScanOnceBtn.MouseButton1Click:Connect(function()
         isBusy = true
         botCycle()
         teleportToIdle()
-        if not StatusLabel.Text:match("Idle") and not StatusLabel.Text:match("Menunggu shift") then 
-            setStatus("Manual Selesai (Standby).") 
-        end
+        setStatus("Manual Selesai (Standby).")
         isBusy = false
     end)
 end)
@@ -760,21 +775,52 @@ ToggleAutoBtn.MouseButton1Click:Connect(function()
         ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
         setStatus("Auto-Scan menyala. Memantau...")
         
-        _G.AutoDoctor_Loop = task.spawn(function()
+        local lastShift = getShiftText()
+        
+        -- JALANKAN PEKERJA UTAMA
+        startWorker()
+        
+        -- [ FITUR BARU V31 ]: THE WATCHDOG (Penjaga Bug/Stuck Global)
+        if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
+        _G.AutoDoctor_Watchdog = task.spawn(function()
             while autoScanEnabled do
-                if not isBusy then
-                    isBusy = true
-                    botCycle()
+                task.wait(1)
+                
+                local currentShift = getShiftText()
+                local isShiftChanged = (currentShift ~= lastShift and currentShift ~= nil and lastShift ~= nil)
+                local isStuck = isBusy and (tick() - _G.AutoDoctor_LastActionTick > Config.GlobalStuckTimeout)
+
+                if isShiftChanged or isStuck then
+                    if isShiftChanged then
+                        setStatus("Shift Berganti! AUTO HARD-RESET...")
+                    else
+                        setStatus("SYSTEM STUCK DETECTED! AUTO HARD-RESET...")
+                    end
+                    
+                    -- BUNUH WORKER LAMA
+                    if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
+                    
+                    -- RESET STATE
                     isBusy = false
-                else
-                    task.wait(0.5)
+                    lastShift = currentShift
+                    teleportToIdle()
+                    task.wait(2)
+                    
+                    -- HIDUPKAN WORKER BARU (Re-execute)
+                    if autoScanEnabled then
+                        _G.AutoDoctor_LastActionTick = tick()
+                        startWorker()
+                    end
                 end
+                
+                if currentShift then lastShift = currentShift end
             end
         end)
     else
         ToggleAutoBtn.Text = "Auto-Scan: OFF"
         ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-        if _G.AutoDoctor_Loop then task.cancel(_G.AutoDoctor_Loop) end
+        if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
+        if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
         if not isBusy then setStatus("Dimatikan.") end
     end
 end)
