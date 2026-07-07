@@ -1,8 +1,7 @@
 -- ==========================================
--- AUTO DOCTOR: ROOM 6 STANDALONE (SMART RESUME & KILL SWITCH) ada banyak bug rupanya
+-- AUTO DOCTOR: ROOM 6 STANDALONE (SMART RESUME & V2 TRACKER)
 -- ==========================================
 
--- [ANTI DOUBLE EXECUTE & CLEANUP]
 if _G.Room6_Standalone then _G.Room6_Standalone:Destroy() end
 if _G.Room6_Loop then task.cancel(_G.Room6_Loop) end
 
@@ -11,15 +10,21 @@ local CoreGui = game:GetService("CoreGui")
 local workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 
+local Config = {
+    WaitTime = 0.5,
+    MaxInventory = 3,
+    StuckTimeout = 25, -- Waktu (detik) sebelum script otomatis me-reset minigame jika stuck
+}
+
 local Room6CFrame = CFrame.new(-171.493195, 3.4575305, 57.6354637, -0.097861506, 5.37626921e-09, 0.995200038, -8.93599061e-09, 1, -6.28090646e-09, -0.995200038, -9.50775725e-09, -0.097861506)
 local ItemList = {"Herbs", "Medicine", "Maple Syrup", "Cough Syrup", "Bandages", "Ointment", "Thermo", "Medkit", "IV Drops", "Eye Drops", "Antibiotics", "Scalpel", "Scissors", "Organ", "Transplant"}
 
 local isRunning = false
 local autoActive = false
-local stopColorTracker = false
+local isAutoPlayingMinigame = false
 
 -- ==========================================
--- 1. GUI (BISA DI-CLOSE TOTAL)
+-- 1. GUI (KILL SWITCH & FORCE FAIL)
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "Room6Auto"
@@ -27,8 +32,8 @@ ScreenGui.Parent = pcall(function() return CoreGui.RobloxGui end) and CoreGui or
 _G.Room6_Standalone = ScreenGui
 
 local Frame = Instance.new("Frame", ScreenGui)
-Frame.Size = UDim2.new(0, 220, 0, 100)
-Frame.Position = UDim2.new(0.5, 150, 0.8, -50)
+Frame.Size = UDim2.new(0, 230, 0, 130)
+Frame.Position = UDim2.new(0.5, 150, 0.8, -70)
 Frame.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 Frame.Active = true
 Frame.Draggable = true
@@ -43,13 +48,12 @@ local Title = Instance.new("TextLabel", TitleBar)
 Title.Size = UDim2.new(1, -30, 1, 0)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "🏥 Smart Auto R6"
+Title.Text = "🏥 Auto R6 (V2 Tracker)"
 Title.TextColor3 = Color3.fromRGB(0, 255, 150)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 13
+Title.TextSize = 12
 Title.TextXAlignment = Enum.TextXAlignment.Left
 
--- TOMBOL CLOSE (MATI TOTAL)
 local CloseBtn = Instance.new("TextButton", TitleBar)
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
 CloseBtn.Position = UDim2.new(1, -30, 0, 0)
@@ -60,24 +64,34 @@ CloseBtn.Font = Enum.Font.GothamBold
 CloseBtn.TextSize = 16
 
 local Status = Instance.new("TextLabel", Frame)
-Status.Size = UDim2.new(1, -10, 0, 20)
-Status.Position = UDim2.new(0, 5, 0, 35)
+Status.Size = UDim2.new(1, -10, 0, 30)
+Status.Position = UDim2.new(0, 5, 0, 30)
 Status.BackgroundTransparency = 1
 Status.Text = "Status: Idle"
 Status.TextColor3 = Color3.fromRGB(180, 180, 180)
 Status.Font = Enum.Font.Gotham
 Status.TextSize = 11
-Status.TextScaled = true
+Status.TextWrapped = true
 
 local ToggleBtn = Instance.new("TextButton", Frame)
-ToggleBtn.Size = UDim2.new(1, -20, 0, 30)
-ToggleBtn.Position = UDim2.new(0, 10, 0, 60)
+ToggleBtn.Size = UDim2.new(1, -20, 0, 25)
+ToggleBtn.Position = UDim2.new(0, 10, 0, 65)
 ToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
-ToggleBtn.Text = "START AUTO R6"
+ToggleBtn.Text = "▶ START AUTO R6"
 ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.TextSize = 12
+ToggleBtn.TextSize = 11
 Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 4)
+
+local ForceFailBtn = Instance.new("TextButton", Frame)
+ForceFailBtn.Size = UDim2.new(1, -20, 0, 25)
+ForceFailBtn.Position = UDim2.new(0, 10, 0, 95)
+ForceFailBtn.BackgroundColor3 = Color3.fromRGB(150, 100, 30)
+ForceFailBtn.Text = "🔄 FORCE FAIL (ANTI-STUCK)"
+ForceFailBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ForceFailBtn.Font = Enum.Font.GothamBold
+ForceFailBtn.TextSize = 11
+Instance.new("UICorner", ForceFailBtn).CornerRadius = UDim.new(0, 4)
 
 local function setStatus(txt)
     Status.Text = txt
@@ -85,7 +99,7 @@ local function setStatus(txt)
 end
 
 -- ==========================================
--- 2. UTILITIES
+-- 2. UTILITIES (DARI V23)
 -- ==========================================
 local function interact(prompt, holdTime)
     if not prompt or not prompt:IsA("ProximityPrompt") then return end
@@ -98,22 +112,24 @@ local function interact(prompt, holdTime)
         task.wait(holdTime)
         prompt:InputHoldEnded()
     end
-    task.wait(0.5)
+    task.wait(0.2)
 end
 
-local function getInventoryCount()
-    local count = 0
-    if LocalPlayer:FindFirstChild("Backpack") then
-        for _, v in ipairs(LocalPlayer.Backpack:GetChildren()) do if table.find(ItemList, v.Name) then count = count + 1 end end
-    end
-    return count
+local function checkTotalInventory()
+    local targetCount = 0
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = LocalPlayer.Character
+    local function processTool(item) if item:IsA("Tool") and table.find(ItemList, item.Name) then targetCount = targetCount + 1 end end
+    if backpack then for _, item in ipairs(backpack:GetChildren()) do processTool(item) end end
+    if character then for _, item in ipairs(character:GetChildren()) do processTool(item) end end
+    return targetCount
 end
 
 local function fetchItem(itemName)
     local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not root then return false end
 
-    if getInventoryCount() >= 3 then
+    if checkTotalInventory() >= Config.MaxInventory then
         local trash = workspace:FindFirstChild("Trash")
         local itemToTrash = LocalPlayer.Backpack:FindFirstChildWhichIsA("Tool")
         if trash and itemToTrash then
@@ -140,55 +156,86 @@ local function fetchItem(itemName)
     return false
 end
 
+-- Fungsi reset paksa (Menyalahkan 1 warna acak agar game ter-reset)
+local function forceFailMinigame()
+    local minigame = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room6") and workspace.Rooms.Emergency.Room6:FindFirstChild("Minigame")
+    if minigame and minigame:FindFirstChild("Colors") then
+        local firstBtn = minigame.Colors:FindFirstChild("Button", true)
+        if firstBtn then
+            local cd = firstBtn:FindFirstChildWhichIsA("ClickDetector")
+            if cd and fireclickdetector then 
+                setStatus("Memaksa reset minigame...")
+                fireclickdetector(cd) 
+            end
+        end
+    end
+end
+
 -- ==========================================
--- 3. BACKGROUND COLOR TRACKER (INDEPENDENT)
+-- 3. BACKGROUND COLOR TRACKER V2
 -- ==========================================
+local sequenceInstances = {}
+local lastFlashTime = tick()
+local stopColorTracker = false
+local buttonTasks = {}
+
 local function startColorTracker(minigame)
     local colors = minigame:FindFirstChild("Colors")
     if not colors then return end
 
-    local seq = {}
+    sequenceInstances = {}
     local conns = {}
-    local listening = true
-    local lastTime = tick()
     stopColorTracker = false
 
-    -- Listener Lampu
-    for _, btn in ipairs(colors:GetDescendants()) do
-        if btn:IsA("BasePart") and btn.Name == "Button" then
-            table.insert(conns, btn:GetPropertyChangedSignal("BrickColor"):Connect(function()
-                if stopColorTracker or not listening then return end
-                if tostring(btn.BrickColor) ~= "Black" then
-                    task.delay(0.2, function()
-                        if tostring(btn.BrickColor) ~= "Black" then
-                            table.insert(seq, btn)
-                            lastTime = tick()
-                        end
-                    end)
+    -- Listener Lampu (Persis seperti V2)
+    for _, button in ipairs(colors:GetDescendants()) do
+        if button:IsA("BasePart") and button.Name == "Button" then
+            local conn = button:GetPropertyChangedSignal("BrickColor"):Connect(function()
+                if stopColorTracker or isAutoPlayingMinigame then return end
+                
+                local warnaSekarang = tostring(button.BrickColor)
+                if buttonTasks[button] then 
+                    task.cancel(buttonTasks[button]) 
+                    buttonTasks[button] = nil 
                 end
-            end))
+                
+                if warnaSekarang == "Black" then return end
+                
+                -- Delay 0.25 untuk menghindari double detect
+                buttonTasks[button] = task.delay(0.25, function()
+                    table.insert(sequenceInstances, button)
+                    lastFlashTime = tick()
+                    setStatus("Merekam: " .. warnaSekarang .. " (" .. #sequenceInstances .. ")")
+                end)
+            end)
+            table.insert(conns, conn)
         end
     end
 
-    -- Eksekutor Klik
+    -- Eksekutor Klik (Mengeksekusi otomatis jika 1.8 detik tidak ada lampu menyala)
     task.spawn(function()
         while not stopColorTracker do
             task.wait(0.3)
-            if #seq > 0 and (tick() - lastTime) > 1.5 then
-                listening = false
-                setStatus("🤖 Tracker: Auto Klik " .. #seq .. " Warna!")
-                for _, btn in ipairs(seq) do
+            -- Jika ada urutan dan sudah lewat 1.8 detik sejak lampu terakhir nyala
+            if #sequenceInstances > 0 and (tick() - lastFlashTime) > 1.8 and not isAutoPlayingMinigame then
+                isAutoPlayingMinigame = true
+                setStatus("🤖 Eksekusi Auto-Click (" .. #sequenceInstances .. "x)...")
+                
+                for i, btn in ipairs(sequenceInstances) do
                     if stopColorTracker then break end
-                    local cd = btn:FindFirstChildWhichIsA("ClickDetector")
+                    setStatus("-> Mengklik (" .. i .. "/" .. #sequenceInstances .. ")")
+                    
+                    local clickDet = btn:FindFirstChildWhichIsA("ClickDetector")
                     local prox = btn:FindFirstChildWhichIsA("ProximityPrompt")
-                    if cd and fireclickdetector then fireclickdetector(cd) end
+                    if clickDet and fireclickdetector then fireclickdetector(clickDet) end
                     if prox then interact(prox, 0) end
-                    task.wait(0.6)
+                    
+                    task.wait(0.6) -- Jeda antar klik agar tidak anti-cheat
                 end
-                seq = {}
+                
+                sequenceInstances = {}
                 task.wait(1)
-                listening = true
-                lastTime = tick()
+                isAutoPlayingMinigame = false
             end
         end
         for _, c in ipairs(conns) do c:Disconnect() end
@@ -196,7 +243,7 @@ local function startColorTracker(minigame)
 end
 
 -- ==========================================
--- 4. SMART RESUME LOGIC (DYNAMIC STATE)
+-- 4. SMART RESUME & ANTI-STUCK LOGIC
 -- ==========================================
 local function executeRoom6()
     local path = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room6")
@@ -205,7 +252,6 @@ local function executeRoom6()
     
     if not minigame or not root then return end
 
-    -- [UPDATE] Cek Status Room 6 Lewat Layar TV / Monitor XRay (Tanpa mencari kasur)
     local tvScreen = minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen", true)
     local treatTextObj = tvScreen and tvScreen:FindFirstChild("treatment", true)
     local xray = minigame:FindFirstChild("xrayMonitor")
@@ -213,20 +259,12 @@ local function executeRoom6()
     
     local isRoomActive = false
     
-    -- Parameter 1: Jika TV memiliki teks treatment (misal 0/3) yang belum selesai
+    -- Cek jika kamar punya pasien (Dari TV atau XRay)
     if treatTextObj then
         local cur, max = treatTextObj.Text:match("(%d+)/(%d+)")
-        if cur and max and cur ~= max and max ~= "0" then
-            isRoomActive = true
-        end
+        if cur and max and cur ~= max and max ~= "0" then isRoomActive = true end
     end
-    
-    -- Parameter 2: Jika TV belum nyala, tapi X-Ray siap ditekan
-    if xrayPP and xrayPP.Enabled then
-        isRoomActive = true
-    end
-
-    -- Jika tidak ada tanda-tanda pasien, batalkan
+    if xrayPP and xrayPP.Enabled then isRoomActive = true end
     if not isRoomActive then return end
 
     setStatus("Kondisi Room 6 Aktif! Menyiapkan R6...")
@@ -238,17 +276,17 @@ local function executeRoom6()
     startColorTracker(minigame)
 
     local isDone = false
-    local timeout = 120 -- Timeout 120 detik per pasien
+    local lastProgressTime = tick() -- Waktu untuk Anti-Stuck
+    local lastPendingCount = -1
     
-    -- LOOP DINAMIS: Cek apa yang aktif saat ini, dan jalankan!
-    while not isDone and timeout > 0 and autoActive do
+    -- LOOP UTAMA DINAMIS
+    while not isDone and autoActive do
         task.wait(1)
-        timeout = timeout - 1
 
-        -- CEK STATE 1: Apakah sudah waktunya Suntik? (Cek Layar TV)
+        -- 1. CEK SUNTIK OBAT (Prioritas Tertinggi)
         local invUI = tvScreen and tvScreen:FindFirstChild("inv", true)
         
-        -- Cari target suntik (NPC di dekat Room 6 karena kasur tidak ada)
+        -- Cari target NPC pasien
         local patientPP = nil
         for _, npc in ipairs(workspace.NPCs:GetChildren()) do
             local pt = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
@@ -257,7 +295,6 @@ local function executeRoom6()
                 break
             end
         end
-        -- Fallback jika NPC tidak ketemu, cari PP acak di dalam minigame yang bukan mesin
         if not patientPP then patientPP = minigame:FindFirstChild("PP", true) end
 
         if invUI and #invUI:GetChildren() > 1 then
@@ -267,6 +304,12 @@ local function executeRoom6()
                     local chk = req:FindFirstChild("check")
                     if not chk or not chk.Visible then table.insert(pending, req.Name) end
                 end
+            end
+            
+            -- Anti-stuck progress reset
+            if #pending ~= lastPendingCount then
+                lastPendingCount = #pending
+                lastProgressTime = tick()
             end
 
             if #pending == 0 then
@@ -287,42 +330,52 @@ local function executeRoom6()
                     if tool then LocalPlayer.Character.Humanoid:EquipTool(tool) end
                     task.wait(0.2)
                     
-                    setStatus("Menerapkan: " .. obat)
+                    setStatus("Menyuntikkan: " .. obat)
                     if patientPP then interact(patientPP, 0.25) end
                 end
-                continue -- Ulang loop untuk ngecek sisa obat
+                continue 
             end
         end
 
-        -- CEK STATE 2: Apakah ada Prompt Collect? (Warna Selesai)
+        -- 2. CEK COLLECT
         local collected = false
         for _, pp in ipairs(minigame:GetDescendants()) do
             if pp:IsA("ProximityPrompt") and pp.ActionText:match("Collect") and pp.Enabled then
                 setStatus("Mengambil Hasil (Collect)...")
                 interact(pp, 0.5)
+                lastProgressTime = tick()
                 collected = true
                 break
             end
         end
         if collected then continue end 
 
-        -- CEK STATE 3: Apakah ada Process Results? (X-Ray Selesai)
+        -- 3. CEK PROCESS RESULTS (PP2)
         local monitor = minigame:FindFirstChild("Monitor")
         local pp2 = monitor and monitor:FindFirstChild("PP2")
         if pp2 and pp2.Enabled then
             setStatus("Memproses Monitor (PP2)...")
             interact(pp2, 0.25)
+            lastProgressTime = tick()
             continue
         end
 
-        -- CEK STATE 4: Apakah X-Ray Belum Dipencet?
+        -- 4. CEK X-RAY
         if xrayPP and xrayPP.Enabled then
             setStatus("Memulai X-Ray...")
             interact(xrayPP, 0.25)
+            lastProgressTime = tick()
             continue
         end
 
-        setStatus("Menunggu / Memproses Minigame...")
+        -- 5. ANTI-STUCK WATCHDOG (DARI V23)
+        if tick() - lastProgressTime >= Config.StuckTimeout then
+            setStatus("⚠️ STUCK " .. Config.StuckTimeout .. "s! Memaksa reset minigame...")
+            forceFailMinigame()
+            lastProgressTime = tick() -- Reset timer agar tidak spam
+        else
+            setStatus("Menunggu Minigame... (" .. math.floor(Config.StuckTimeout - (tick() - lastProgressTime)) .. "s sebelum auto-reset)")
+        end
     end
 
     stopColorTracker = true 
@@ -334,7 +387,7 @@ end
 ToggleBtn.MouseButton1Click:Connect(function()
     autoActive = not autoActive
     if autoActive then
-        ToggleBtn.Text = "STOP AUTO R6"
+        ToggleBtn.Text = "⏹ STOP AUTO R6"
         ToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
         
         _G.Room6_Loop = task.spawn(function()
@@ -349,12 +402,16 @@ ToggleBtn.MouseButton1Click:Connect(function()
             end
         end)
     else
-        ToggleBtn.Text = "START AUTO R6"
+        ToggleBtn.Text = "▶ START AUTO R6"
         ToggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
         setStatus("Auto Dimatikan.")
         stopColorTracker = true
         if _G.Room6_Loop then task.cancel(_G.Room6_Loop) end
     end
+end)
+
+ForceFailBtn.MouseButton1Click:Connect(function()
+    forceFailMinigame()
 end)
 
 CloseBtn.MouseButton1Click:Connect(function()
