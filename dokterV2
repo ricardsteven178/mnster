@@ -1,5 +1,5 @@
 -- ==========================================
--- ANTI DOUBLE EXECUTE & CLEANUP Include pingsan Fix
+-- ANTI DOUBLE EXECUTE & CLEANUP
 -- ==========================================
 if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end
 if _G.AutoDoctor_Loop then task.cancel(_G.AutoDoctor_Loop) end
@@ -79,7 +79,7 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "Auto Doctor v24"
+TitleText.Text = "Auto Doctor v25"
 TitleText.TextColor3 = Color3.fromRGB(0, 255, 150)
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 14
@@ -344,6 +344,7 @@ local function simpleInteract(prompt, customHold)
     return true
 end
 
+-- [ FIX V25 ]: SMART ROOM FILTER
 local function findActiveRoom()
     local roomsFolder = workspace:FindFirstChild("Rooms")
     local medicalFolder = roomsFolder and roomsFolder:FindFirstChild("Medical")
@@ -356,12 +357,17 @@ local function findActiveRoom()
             local signLight = room:FindFirstChild("MainSign") and room.MainSign:FindFirstChild("Light")
             if signLight and signLight:IsA("BasePart") then
                 if signLight.BrickColor.Name == "Crimson" or signLight.Color == Color3.fromRGB(165, 0, 0) then
-                    return room
+                    -- CEK APAKAH RUANGAN INI SEDANG DALAM PROSES RECOVERY (HEALING)?
+                    local minigame = room:FindFirstChild("Minigame")
+                    if not isHealingDone(minigame) then
+                        -- Jika TIDAK sedang healing, berarti ini ruangan yang valid!
+                        return room
+                    end
                 end
             end
         end
     end
-    return nil
+    return nil -- Kembali ke idle jika semua ruangan hitam ATAU sedang proses healing
 end
 
 local function handleFaintedPatientsIfAny()
@@ -399,7 +405,6 @@ local function handleFaintedPatientsIfAny()
                 setStatus("Membawa ke " .. targetRoom.Name .. "...")
                 teleportToSafeRoom(roomNum)
                 
-                -- PENCARIAN PROMPT DIPERBAIKI: Mencari di dalam ruangan (kasur), bukan di NPC
                 local placePP = nil
                 for _, desc in ipairs(targetRoom:GetDescendants()) do
                     if desc:IsA("ProximityPrompt") and (desc.Name == "FaintedPP" or desc.ActionText:match("Place")) then
@@ -429,8 +434,6 @@ local function executeTreatmentCore(roomPath)
     local roomNum = tonumber(roomPath.Name:match("%d+"))
 
     if isHealingDone(minigame) then
-        setStatus("SKIPPED: Layar Healing menyala.")
-        task.wait(1.5)
         return
     end
 
