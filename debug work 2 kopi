@@ -1,0 +1,112 @@
+-- ==========================================================
+-- LIVE COFFEE MONITOR V2 (ANTI-BOCOR / FULLY FIXED)
+-- ==========================================================
+
+local workspace = game:GetService("Workspace")
+local guiParent = (gethui and gethui()) or game:GetService("CoreGui") or game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+-- Hapus UI lama jika ada
+if guiParent:FindFirstChild("LiveCoffeeSpy") then
+	guiParent.LiveCoffeeSpy:Destroy()
+end
+
+-- Tabel untuk menampung semua kabel koneksi
+local connections = {}
+
+-- ==========================================
+-- 1. MEMBUAT GUI SAKELAR
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "LiveCoffeeSpy"
+ScreenGui.Parent = guiParent
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 260, 0, 110)
+MainFrame.Position = UDim2.new(0.5, -130, 0, 20)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 25, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundTransparency = 1
+Title.Text = "📡 Live Coffee Monitor V2"
+Title.TextColor3 = Color3.fromRGB(100, 255, 150)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 14
+Title.Parent = MainFrame
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Size = UDim2.new(0.8, 0, 0, 30)
+CloseButton.Position = UDim2.new(0.1, 0, 0, 70)
+CloseButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
+CloseButton.Text = "🛑 MATIKAN SCANNER"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.TextSize = 13
+CloseButton.Parent = MainFrame
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 6)
+BtnCorner.Parent = CloseButton
+
+-- ==========================================
+-- 2. FUNGSI KILL SWITCH (TUTUP & BERSIHKAN)
+-- ==========================================
+CloseButton.MouseButton1Click:Connect(function()
+	-- Putuskan semua alat sadap dengan aman
+	for _, conn in ipairs(connections) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	table.clear(connections) -- Kosongkan tabel dari memori
+	
+	ScreenGui:Destroy()
+	print("✅ [MONITOR V2 DIMATIKAN] Sistem bersih! Dijamin 100% tidak ada spam.")
+end)
+
+-- ==========================================
+-- 3. SISTEM ALAT SADAP REAL-TIME
+-- ==========================================
+local function hookMachine(machine)
+	-- Pantau perubahan pada Atribut "Brewing"
+	local brewConn = machine:GetAttributeChangedSignal("Brewing"):Connect(function()
+		local isBrewing = machine:GetAttribute("Brewing")
+		print("⚙️ [" .. machine.Name .. "] Status: Brewing = " .. tostring(isBrewing))
+	end)
+	table.insert(connections, brewConn)
+
+	-- Pantau UI Teks Timer
+	local statusUI = machine:FindFirstChild("Attachment") 
+		and machine.Attachment:FindFirstChild("UI") 
+		and machine.Attachment.UI:FindFirstChild("status")
+
+	if statusUI then
+		local textConn = statusUI:GetPropertyChangedSignal("Text"):Connect(function()
+			-- Membuang tag font agar lebih rapi
+			local cleanText = string.gsub(statusUI.Text, "<[^>]+>", "")
+			print("⏳ [" .. machine.Name .. "] Timer: " .. cleanText)
+		end)
+		table.insert(connections, textConn)
+	end
+end
+
+-- ==========================================
+-- 4. EKSEKUSI PEMANTAUAN
+-- ==========================================
+print("=======================================")
+local miscFolder = workspace:WaitForChild("Misc")
+for _, obj in pairs(miscFolder:GetChildren()) do
+	if string.find(obj.Name, "CoffeeMachine") then
+		hookMachine(obj)
+		print("📡 CCTV V2 terpasang pada: " .. obj.Name)
+	end
+end
+print("=======================================")
