@@ -1,0 +1,133 @@
+-- ==========================================================
+-- ULTIMATE MINIGAME DEBUGGER (VALUE SCANNER + REMOTE SPY)
+-- ==========================================================
+
+-- Melindungi UI agar tidak terdeteksi oleh game
+local guiParent = (gethui and gethui()) or game:GetService("CoreGui") or game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+
+-- Hapus UI lama jika script dijalankan ulang
+if guiParent:FindFirstChild("MinigameDebuggerUI") then
+	guiParent.MinigameDebuggerUI:Destroy()
+end
+
+-- Variabel penentu nyala/mati
+local isSpying = true
+
+-- ==========================================
+-- MEMBUAT GUI SEDERHANA
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "MinigameDebuggerUI"
+ScreenGui.Parent = guiParent
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 260, 0, 110)
+MainFrame.Position = UDim2.new(0.5, -130, 0, 20) -- Posisi di tengah atas layar
+MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true -- Bisa digeser-geser
+MainFrame.Parent = ScreenGui
+
+local UICorner = Instance.new("UICorner")
+UICorner.CornerRadius = UDim.new(0, 8)
+UICorner.Parent = MainFrame
+
+local Title = Instance.new("TextLabel")
+Title.Size = UDim2.new(1, 0, 0, 30)
+Title.BackgroundTransparency = 1
+Title.Text = "🛠️ Minigame Debugger Aktif"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.Font = Enum.Font.GothamBold
+Title.TextSize = 15
+Title.Parent = MainFrame
+
+local Description = Instance.new("TextLabel")
+Description.Size = UDim2.new(1, -20, 0, 30)
+Description.Position = UDim2.new(0, 10, 0, 30)
+Description.BackgroundTransparency = 1
+Description.Text = "Pantau F9! Selesaikan minigame 1x."
+Description.TextColor3 = Color3.fromRGB(150, 200, 255)
+Description.Font = Enum.Font.Gotham
+Description.TextSize = 12
+Description.Parent = MainFrame
+
+local CloseButton = Instance.new("TextButton")
+CloseButton.Size = UDim2.new(0.8, 0, 0, 30)
+CloseButton.Position = UDim2.new(0.1, 0, 0, 70)
+CloseButton.BackgroundColor3 = Color3.fromRGB(220, 50, 50)
+CloseButton.Text = "🛑 MATIKAN & TUTUP"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.Font = Enum.Font.GothamBold
+CloseButton.TextSize = 13
+CloseButton.Parent = MainFrame
+
+local BtnCorner = Instance.new("UICorner")
+BtnCorner.CornerRadius = UDim.new(0, 6)
+BtnCorner.Parent = CloseButton
+
+-- ==========================================
+-- FUNGSI TOMBOL TUTUP (KILL SWITCH)
+-- ==========================================
+CloseButton.MouseButton1Click:Connect(function()
+	isSpying = false -- Mematikan fungsi spy di hook & loop scanner
+	ScreenGui:Destroy() -- Menghapus UI dari layar
+	print("✅ [DEBUGGER DIMATIKAN] Sistem kembali normal. Tidak ada lagi spam di F9.")
+end)
+
+-- ==========================================
+-- 1. SISTEM VALUE SCANNER (Cari Skor Lokal)
+-- ==========================================
+task.spawn(function()
+	local Player = game:GetService("Players").LocalPlayer
+	local PlayerGui = Player:WaitForChild("PlayerGui")
+	
+	while task.wait(1) do
+		if not isSpying then break end
+		
+		local minigame = PlayerGui:FindFirstChild("Minigame")
+		if minigame then
+			for _, obj in ipairs(minigame:GetDescendants()) do
+				-- Cari objek penyimpanan angka tersembunyi
+				if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+					print("🔍 [VALUE TERSEMBUNYI] Nama: " .. obj.Name .. " | Nilai: " .. tostring(obj.Value))
+				end
+			end
+		end
+	end
+end)
+
+-- ==========================================
+-- 2. SISTEM REMOTE SPY (Tangkap Sinyal Server)
+-- ==========================================
+local oldNamecall
+oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+	-- Jika dimatikan, langsung lewat tanpa filter
+	if not isSpying then
+		return oldNamecall(self, ...)
+	end
+
+	local method = getnamecallmethod()
+	local args = {...}
+	
+	-- Menangkap FireServer (Event) dan InvokeServer (Function)
+	if method == "FireServer" or method == "InvokeServer" then
+		local remoteName = tostring(self.Name)
+		
+		-- Filter sinyal sampah (Anti-Spam)
+		if remoteName ~= "UpdateMouse" and remoteName ~= "UpdateMovement" and remoteName ~= "MousePos" then
+			print("=======================================")
+			print("🚨 [REMOTE TERTANGKAP] " .. remoteName)
+			print("📂 LOKASI: " .. self:GetFullName())
+			print("📝 ARGUMEN (" .. method .. "):")
+			for i, v in ipairs(args) do
+				print("   [" .. i .. "] Tipe: " .. type(v) .. " | Nilai: " .. tostring(v))
+			end
+			print("=======================================")
+		end
+	end
+	
+	return oldNamecall(self, ...)
+end)
+
+print("🛠️ Debugger aktif! Buka F9 dan pantau pergerakannya.")
