@@ -1,10 +1,11 @@
 -- ==========================================
--- ANTI DOUBLE EXECUTE & CLEANUP WORK kurang sempurnain auto MaxInventory dan masih lambat aja
+-- ANTI DOUBLE EXECUTE & CLEANUP
 -- ==========================================
 if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end
 if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
 if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
 if _G.AutoDoctor_RadarLoop then task.cancel(_G.AutoDoctor_RadarLoop) end
+if _G.AutoDoctor_NotifLoop then _G.AutoDoctor_NotifLoop:Disconnect() end
 if _G.AutoDoctor_Radars then
     for _, radar in pairs(_G.AutoDoctor_Radars) do
         if radar then radar:Destroy() end
@@ -19,7 +20,7 @@ local Config = {
     ShowConsoleLogs = true,   
     MaxRooms = 5,             
     WaitTime = 0.5,           
-    MaxInventory = 3,         
+    MaxInventory = 5,         
     ScanDelay = 5,
     StuckTimeout = 20,        
     GlobalStuckTimeout = 45,  
@@ -93,7 +94,7 @@ local TitleText = Instance.new("TextLabel")
 TitleText.Size = UDim2.new(1, -60, 1, 0)
 TitleText.Position = UDim2.new(0, 10, 0, 0)
 TitleText.BackgroundTransparency = 1
-TitleText.Text = "Auto Doctor v44"
+TitleText.Text = "Auto Doctor v46"
 TitleText.TextColor3 = Color3.fromRGB(0, 255, 150)
 TitleText.Font = Enum.Font.GothamBold
 TitleText.TextSize = 14
@@ -181,6 +182,37 @@ local function setStatus(text)
         print("[" .. timeStamp .. "] [Auto-Doctor] " .. text) 
     end
 end
+
+task.spawn(function()
+    local pGui = LocalPlayer:WaitForChild("PlayerGui", 10)
+    if not pGui then return end
+    
+    local notifMain = pGui:WaitForChild("Notifications", 10)
+    if not notifMain then return end
+    
+    local notifSub = notifMain:WaitForChild("Notifications", 10)
+    local feed = notifSub and notifSub:WaitForChild("Feed", 10)
+    
+    if feed then
+        _G.AutoDoctor_NotifLoop = feed.ChildAdded:Connect(function(child)
+            if child:IsA("TextLabel") or child:IsA("TextButton") then
+                task.wait(0.1) 
+                local text = string.lower(child.Text)
+                
+                if text:match("can't carry any more") or text:match("full") then
+                    local currentItem, maxItem = string.match(text, "%((%d+)/(%d+)%)")
+                    if maxItem then
+                        local limitServer = tonumber(maxItem)
+                        if Config.MaxInventory ~= limitServer then
+                            Config.MaxInventory = limitServer
+                            setStatus("KALIBRASI SUKSES: Kapasitas tas di shift ini adalah " .. limitServer)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+end)
 
 local function updateVisualRadar(id, pos, radius, color, isVisible)
     if not isVisible then
@@ -274,6 +306,16 @@ local function isHealingDone(minigame)
     return false
 end
 
+local function isInterrupted(minigame)
+    if not minigame then return false end
+    local tv = minigame:FindFirstChild("TV")
+    local screen = tv and tv:FindFirstChild("Screen")
+    local ui = screen and screen:FindFirstChild("UI")
+    local interrupted = ui and ui:FindFirstChild("Interrupted")
+    if interrupted and interrupted:IsA("GuiObject") and interrupted.Visible == true then return true end
+    return false
+end
+
 local function isTvActive(tvUI)
     if not tvUI then return false end
     local invFolder = tvUI:FindFirstChild("inv", true)
@@ -281,6 +323,7 @@ local function isTvActive(tvUI)
     return false
 end
 
+-- [ FIX V46 ]: MUSNAHKAN UIGridLayout BUGS!
 local function getPendingMedicines(tvUI)
     local pending = {}
     if not tvUI then return pending end
@@ -288,9 +331,12 @@ local function getPendingMedicines(tvUI)
     if not invFolder then return pending end
     
     for _, itemReq in ipairs(invFolder:GetChildren()) do
-        if not itemReq:IsA("UIListLayout") then 
+        -- WAJIB HANYA MEMBACA OBJEK YANG ADA DI ITEMLIST KITA!
+        if table.find(ItemList, itemReq.Name) then 
             local checkMark = itemReq:FindFirstChild("check")
-            if not checkMark or (checkMark and checkMark.Visible == false) then table.insert(pending, itemReq.Name) end
+            if not checkMark or (checkMark and checkMark.Visible == false) then 
+                table.insert(pending, itemReq.Name) 
+            end
         end
     end
     return pending
@@ -330,43 +376,62 @@ local function trashItem(toolToTrash)
     local character = LocalPlayer.Character
     local rootPart = character and character:FindFirstChild("HumanoidRootPart")
     local humanoid = character and character:FindFirstChild("Humanoid")
-    local trashBin = workspace:FindFirstChild("Trash")
     
     if not rootPart or not humanoid or not toolToTrash then return false end
     
-    if trashBin then
-        local prompt = trashBin:FindFirstChild("PP") or trashBin:FindFirstChildWhichIsA("ProximityPrompt", true)
-        if prompt and prompt:IsA("ProximityPrompt") then
-            setStatus("Kapasitas penuh! Membuang: " .. toolToTrash.Name)
-            humanoid:EquipTool(toolToTrash)
-            task.wait(0.2)
-            
-            if trashBin:IsA("Model") and trashBin.PrimaryPart then
-                rootPart.CFrame = trashBin.PrimaryPart.CFrame * CFrame.new(0, 3, 0)
-            elseif trashBin:IsA("BasePart") then
-                rootPart.CFrame = trashBin.CFrame * CFrame.new(0, 3, 0)
-            elseif trashBin:FindFirstChildWhichIsA("BasePart") then
-                rootPart.CFrame = trashBin:FindFirstChildWhichIsA("BasePart").CFrame * CFrame.new(0, 3, 0)
+    local trashBin = nil
+    local trashPrompt = nil
+    
+    for _, desc in ipairs(workspace:GetDescendants()) do
+        if desc:IsA("ProximityPrompt") then
+            local actText = string.lower(desc.ActionText or "")
+            local objName = string.lower(desc.Parent and desc.Parent.Name or "")
+            if actText:match("trash") or actText:match("throw") or actText:match("dispose") or objName:match("trash") then
+                trashBin = desc.Parent
+                trashPrompt = desc
+                break
             end
-            
-            rootPart.Velocity = Vector3.new(0, 0, 0)
-            task.wait(Config.WaitTime)
-            
-            prompt.RequiresLineOfSight = false
-            prompt.MaxActivationDistance = math.huge
-            prompt.HoldDuration = 0
-            if type(fireproximityprompt) == "function" then fireproximityprompt(prompt, 1, true)
-            else prompt:InputHoldBegan() task.wait(0.1) prompt:InputHoldEnded() end
-            
-            _G.AutoDoctor_LastActionTick = tick()
-            task.wait(Config.WaitTime)
-            return true
         end
     end
+    
+    if trashBin and trashPrompt then
+        setStatus("Membuang item: " .. toolToTrash.Name)
+        humanoid:EquipTool(toolToTrash)
+        task.wait(0.2)
+        
+        if trashBin:IsA("Model") and trashBin.PrimaryPart then
+            rootPart.CFrame = trashBin.PrimaryPart.CFrame * CFrame.new(0, 3, 0)
+        elseif trashBin:IsA("BasePart") then
+            rootPart.CFrame = trashBin.CFrame * CFrame.new(0, 3, 0)
+        end
+        
+        rootPart.Velocity = Vector3.new(0, 0, 0)
+        task.wait(Config.WaitTime)
+        
+        local oldReq = trashPrompt.RequiresLineOfSight
+        local oldDist = trashPrompt.MaxActivationDistance
+        
+        trashPrompt.RequiresLineOfSight = false
+        trashPrompt.MaxActivationDistance = math.huge
+        trashPrompt.HoldDuration = 0
+        
+        if type(fireproximityprompt) == "function" then fireproximityprompt(trashPrompt, 1, true)
+        else trashPrompt:InputHoldBegan() task.wait(0.1) trashPrompt:InputHoldEnded() end
+        
+        trashPrompt.RequiresLineOfSight = oldReq
+        trashPrompt.MaxActivationDistance = oldDist
+        
+        _G.AutoDoctor_LastActionTick = tick()
+        task.wait(Config.WaitTime)
+        return true
+    end
+    
+    setStatus("GAGAL: Tempat sampah tidak ditemukan!")
     return false
 end
 
-local function fetchItem(targetName)
+-- [ FIX V46 ]: LOGIKA TAS PINTAR - BUANG SAMPAH PRIORITAS
+local function fetchItem(targetName, pendingMedsList)
     local char = LocalPlayer.Character
     local rootPart = char and char:FindFirstChild("HumanoidRootPart")
     if not rootPart then return false end
@@ -374,8 +439,24 @@ local function fetchItem(targetName)
     setStatus("Mengambil: " .. targetName)
 
     local totalAmount, currentItems = checkTotalInventory()
-    if totalAmount >= Config.MaxInventory and #currentItems > 0 then
-        local itemToThrowAway = currentItems[1]
+    
+    -- Jika tas kita mau penuh atau sudah penuh, saatnya cuci gudang barang yg tidak perlu
+    if totalAmount >= Config.MaxInventory then
+        local itemToThrowAway = nil
+        
+        -- Cari barang di tas yang TIDAK ADA di TV sama sekali
+        if pendingMedsList then
+            for _, item in ipairs(currentItems) do
+                if item.Name ~= targetName and not table.find(pendingMedsList, item.Name) then
+                    itemToThrowAway = item
+                    break
+                end
+            end
+        end
+        
+        -- Kalau semua kepakai (mustahil sih), buang barang aja sembarang
+        if not itemToThrowAway then itemToThrowAway = currentItems[1] end
+        
         local trashed = trashItem(itemToThrowAway)
         if not trashed then return false end 
     end
@@ -434,6 +515,43 @@ local function simpleInteract(prompt, customHold)
         task.wait(Config.WaitTime)
     end
     return true
+end
+
+local function getPatientInRoom(roomNum)
+    local roomsFolder = workspace:FindFirstChild("Rooms")
+    local medicalFolder = roomsFolder and roomsFolder:FindFirstChild("Medical")
+    local room = medicalFolder and medicalFolder:FindFirstChild("Room" .. roomNum)
+    local bedPart = room and room:FindFirstChild("Minigame") and room.Minigame:FindFirstChild("Bed") and room.Minigame.Bed:FindFirstChild("InBed")
+    
+    local centerPos = bedPart and bedPart.Position or RoomCFrames[roomNum].Position
+    local radius = Config.PatientBedRadius
+
+    local function checkNPC(npc)
+        if Players:GetPlayerFromCharacter(npc) then return nil end
+
+        local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+        if part and (part.Position - centerPos).Magnitude <= radius then
+            local pp = npc:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if not (pp and (pp.Name == "FaintedPP" or (pp.ActionText and (pp.ActionText:match("Carry") or pp.ActionText:match("Fire"))))) then
+                return npc
+            end
+        end
+        return nil
+    end
+
+    if workspace:FindFirstChild("NPCs") then
+        for _, npc in ipairs(workspace.NPCs:GetChildren()) do
+            local found = checkNPC(npc)
+            if found then return found end
+        end
+    end
+    for _, obj in ipairs(workspace:GetChildren()) do
+        if obj:IsA("Model") and obj ~= LocalPlayer.Character then
+            local found = checkNPC(obj)
+            if found then return found end
+        end
+    end
+    return nil
 end
 
 local function getFireEmergency()
@@ -623,18 +741,16 @@ local function executeTreatmentCore(roomPath, activeShift)
         setStatus("!! PASIEN INI ANOMALI/MONSTER !!")
     end
 
-    -- ========================================================
-    -- [ FIX V44 ]: PENDETEKSI LUKA BAKAR MURNI DARI FISIK (BUANG LOGIKA TV)
-    -- ========================================================
+    -- [ FIX V46 ]: PENDETEKSI LUKA BAKAR WAJIB SEDANG AKTIF (ENABLED)
     local needsOintment = false
     local treatPrompt = nil
 
     if targetNPC then
         for _, desc in ipairs(targetNPC:GetDescendants()) do
-            if desc:IsA("ProximityPrompt") then
+            -- Abaikan tombol yang disembunyikan/dimatikan sistem!
+            if desc:IsA("ProximityPrompt") and desc.Enabled then
                 local actText = desc.ActionText or ""
-                -- Bot HANYA akan nyari obat Ointment JIKA nemu tombol FirePP / Treat Burns!
-                if desc.Name == "FirePP" or actText:match("Treat") or actText:match("treat") or actText:match("Burns") then
+                if desc.Name == "FirePP" or actText:match("Burns") or actText:match("burns") then
                     needsOintment = true
                     treatPrompt = desc
                     break
@@ -647,19 +763,22 @@ local function executeTreatmentCore(roomPath, activeShift)
         setStatus("Darurat Luka Bakar! Butuh Ointment.")
         
         local hasOintment = LocalPlayer.Backpack:FindFirstChild("Ointment") or LocalPlayer.Character:FindFirstChild("Ointment")
-        if not hasOintment then fetchItem("Ointment") end
+        if not hasOintment then fetchItem("Ointment", {"Ointment"}) end
         
         teleportToSafeRoom(roomNum) 
         
         local tool = LocalPlayer.Backpack:FindFirstChild("Ointment") or LocalPlayer.Character:FindFirstChild("Ointment")
-        if tool then LocalPlayer.Character.Humanoid:EquipTool(tool) end
+        if tool then 
+            LocalPlayer.Character.Humanoid:UnequipTools()
+            task.wait(0.1)
+            LocalPlayer.Character.Humanoid:EquipTool(tool) 
+        end
         task.wait(0.2)
 
         setStatus("Mengoleskan Ointment (Treat Burns)...")
         simpleInteract(treatPrompt, 3)
         task.wait(2)
     end
-    -- ========================================================
 
     if isHealingDone(minigame) or getShiftText() ~= activeShift then return end
 
@@ -717,12 +836,16 @@ local function executeTreatmentCore(roomPath, activeShift)
         end
         
         local hasIt = LocalPlayer.Backpack:FindFirstChild(wrongMedicine) or LocalPlayer.Character:FindFirstChild(wrongMedicine)
-        if not hasIt then fetchItem(wrongMedicine) end
+        if not hasIt then fetchItem(wrongMedicine, {wrongMedicine}) end
         
         if bed and bed:FindFirstChild("PP") then
             teleportToSafeRoom(roomNum) 
             local tool = LocalPlayer.Backpack:FindFirstChild(wrongMedicine) or LocalPlayer.Character:FindFirstChild(wrongMedicine)
-            if tool then LocalPlayer.Character.Humanoid:EquipTool(tool) end
+            if tool then 
+                LocalPlayer.Character.Humanoid:UnequipTools()
+                task.wait(0.1)
+                LocalPlayer.Character.Humanoid:EquipTool(tool) 
+            end
             task.wait(0.2)
             
             setStatus("MENYUNTIKKAN OBAT SALAH: " .. wrongMedicine)
@@ -768,13 +891,12 @@ local function executeTreatmentCore(roomPath, activeShift)
             setStatus("Tersisa " .. #pendingMeds .. " obat belum tercentang.")
             
             for _, obat in ipairs(pendingMeds) do
-                local totalInv, _ = checkTotalInventory()
                 local hasIt = LocalPlayer.Backpack:FindFirstChild(obat) or LocalPlayer.Character:FindFirstChild(obat)
                 
                 if hasIt then
                     table.insert(medsReadyToGive, obat)
-                elseif totalInv < Config.MaxInventory then
-                    local fetched = fetchItem(obat)
+                else
+                    local fetched = fetchItem(obat, pendingMeds)
                     if fetched then table.insert(medsReadyToGive, obat) end
                 end
             end
@@ -788,12 +910,25 @@ local function executeTreatmentCore(roomPath, activeShift)
                         local currentPending = getPendingMedicines(tvUI)
                         if table.find(currentPending, obat) then
                             local tool = LocalPlayer.Backpack:FindFirstChild(obat) or LocalPlayer.Character:FindFirstChild(obat)
-                            if tool then LocalPlayer.Character.Humanoid:EquipTool(tool) end
+                            
+                            -- [ FIX V46 ]: ANTI-SALAH SUNTIK & WRONG TREATMENT PREVENTER
+                            if tool then 
+                                LocalPlayer.Character.Humanoid:UnequipTools() -- Bersihkan tangan dulu
+                                task.wait(0.1)
+                                LocalPlayer.Character.Humanoid:EquipTool(tool) -- Pegang obat yang benar
+                            end
                             task.wait(0.2)
                             
-                            setStatus("Suntik: " .. obat)
-                            simpleInteract(bed.PP, 0.25)
-                            task.wait(0.5) 
+                            -- Cek ke tangan secara langsung, apakah benar-benar memegang obat yang dibutuhkan?
+                            local heldTool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                            if heldTool and heldTool.Name == obat then
+                                setStatus("Suntik: " .. obat)
+                                simpleInteract(bed.PP, 0.25)
+                                task.wait(0.5) 
+                            else
+                                setStatus("FAILSAFE: Gagal memegang " .. obat .. "! Batal suntik untuk mencegah pasien mati.")
+                                task.wait(0.5)
+                            end
                         else
                             setStatus("SKIP: " .. obat .. " sudah diberikan player lain!")
                         end
@@ -908,6 +1043,7 @@ CloseBtn.MouseButton1Click:Connect(function()
     if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
     if _G.AutoDoctor_Worker then task.cancel(_G.AutoDoctor_Worker) end
     if _G.AutoDoctor_RadarLoop then task.cancel(_G.AutoDoctor_RadarLoop) end
+    if _G.AutoDoctor_NotifLoop then _G.AutoDoctor_NotifLoop:Disconnect() end
     if _G.AutoDoctor_Radars then
         for _, radar in pairs(_G.AutoDoctor_Radars) do if radar then radar:Destroy() end end
     end
@@ -972,6 +1108,8 @@ ToggleAutoBtn.MouseButton1Click:Connect(function()
                 if isShiftChanged or isStuck then
                     if isShiftChanged then
                         setStatus("Shift Berganti! AUTO HARD-RESET...")
+                        Config.MaxInventory = 5
+                        setStatus("Reset limit tas ke 5 untuk kalibrasi shift baru.")
                     else
                         setStatus("SYSTEM STUCK DETECTED! AUTO HARD-RESET...")
                     end
