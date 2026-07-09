@@ -26,7 +26,7 @@ local Config = {
     ScanDelay = 0.5,          
     StuckTimeout = 25,        
     GlobalStuckTimeout = 45,  
-    BlacklistDuration = 60,   
+    BlacklistDuration = 30,   
     PatientBedRadius = 10,    
     
     IdleCFrame = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967),
