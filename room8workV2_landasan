@@ -1,0 +1,669 @@
+-- ==========================================
+-- AUTO DOCTOR: ROOM 8 SURGERY EDITION (FINAL FIX & ANTI-SPAM)
+-- ==========================================
+if _G.Room8Auto_Main then _G.Room8Auto_Main:Destroy() end
+if _G.Room8Auto_Watchdog then task.cancel(_G.Room8Auto_Watchdog) end
+if _G.Room8Auto_Worker then task.cancel(_G.Room8Auto_Worker) end
+if _G.Room8Auto_RadarLoop then task.cancel(_G.Room8Auto_RadarLoop) end
+if _G.Room8Auto_Radars then
+    for _, radar in pairs(_G.Room8Auto_Radars) do
+        if radar then radar:Destroy() end
+    end
+end
+_G.Room8Auto_Radars = {}
+
+-- ==========================================
+-- CONFIGURATION & KOORDINAT
+-- ==========================================
+local Config = {
+    ShowConsoleLogs = true,   
+    WaitTime = 0.3,           
+    MaxInventory = 3,         
+    ScanDelay = 3,            
+    StuckTimeout = 20,        
+    GlobalStuckTimeout = 45,  
+    ShowRadar = true,
+    PatientBedRadius = 10,
+    Room8CFrame = CFrame.new(-144.677734, 9.86026287, 100.62632, -0.99913466, -0.019999085, 0.0364686623, 6.34530828e-09, 0.876810908, 0.480835348, -0.0415923893, 0.480419248, -0.876052201),
+    IdleCFrame = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967)
+}
+
+local ItemList = {
+    "Herbs", "Medicine", "Maple Syrup", "Cough Syrup", "Bandages", 
+    "Ointment", "Thermo", "Medkit", "IV Drops", "Eye Drops", 
+    "Antibiotics", "Scalpel", "Scissors", "Organ", "Transplant"
+}
+
+-- ==========================================
+-- VARIABLES & GUI CREATION
+-- ==========================================
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+
+local isBusy = false
+local autoScanEnabled = false
+local isRadarVisible = Config.ShowRadar
+local isBotIdle = false -- [ NEW ]: Tracker agar tidak teleport idle berkali-kali
+local lastLoggedText = "" -- [ NEW ]: Tracker agar console tidak spam
+_G.Room8Auto_LastActionTick = tick()
+
+local guiParent = (RunService:IsStudio() and LocalPlayer:WaitForChild("PlayerGui")) or pcall(function() return CoreGui.RobloxGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "Room8AutoDoctorUI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = guiParent
+_G.Room8Auto_Main = ScreenGui 
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 250, 0, 180) 
+MainFrame.Position = UDim2.new(0.5, 130, 0.5, -90) 
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.ClipsDescendants = true 
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 8)
+
+local TitleCover = Instance.new("Frame")
+TitleCover.Size = UDim2.new(1, 0, 0, 10)
+TitleCover.Position = UDim2.new(0, 0, 1, -10)
+TitleCover.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TitleCover.BorderSizePixel = 0
+TitleCover.Parent = TitleBar
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -60, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "Room 8 (Safe V5)"
+TitleText.TextColor3 = Color3.fromRGB(0, 255, 150)
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 13
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+MinimizeBtn.Position = UDim2.new(1, -60, 0, 0)
+MinimizeBtn.BackgroundTransparency = 1
+MinimizeBtn.Text = "-"
+MinimizeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 18
+MinimizeBtn.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 70, 70)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+CloseBtn.Parent = TitleBar
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -30)
+ContentFrame.Position = UDim2.new(0, 0, 0, 30)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+local StatusLabel = Instance.new("TextLabel")
+StatusLabel.Size = UDim2.new(1, -20, 0, 30) 
+StatusLabel.Position = UDim2.new(0, 10, 0, 0)
+StatusLabel.BackgroundTransparency = 1
+StatusLabel.Text = "Status: Menunggu..."
+StatusLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+StatusLabel.Font = Enum.Font.GothamSemibold
+StatusLabel.TextSize = 11 
+StatusLabel.TextWrapped = true 
+StatusLabel.TextXAlignment = Enum.TextXAlignment.Center
+StatusLabel.Parent = ContentFrame
+
+local ToggleAutoBtn = Instance.new("TextButton")
+ToggleAutoBtn.Size = UDim2.new(1, -20, 0, 30)
+ToggleAutoBtn.Position = UDim2.new(0, 10, 0, 35)
+ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+ToggleAutoBtn.Text = "Auto Room 8: OFF"
+ToggleAutoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleAutoBtn.Font = Enum.Font.GothamBold
+ToggleAutoBtn.TextSize = 14
+ToggleAutoBtn.Parent = ContentFrame
+Instance.new("UICorner", ToggleAutoBtn).CornerRadius = UDim.new(0, 6)
+
+local RadarBtn = Instance.new("TextButton")
+RadarBtn.Size = UDim2.new(1, -20, 0, 30)
+RadarBtn.Position = UDim2.new(0, 10, 0, 70)
+RadarBtn.Text = isRadarVisible and "SHOW RADAR: ON" or "SHOW RADAR: OFF"
+RadarBtn.BackgroundColor3 = isRadarVisible and Color3.fromRGB(70, 200, 70) or Color3.fromRGB(70, 70, 70)
+RadarBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RadarBtn.Font = Enum.Font.GothamBold
+RadarBtn.TextSize = 14
+RadarBtn.Parent = ContentFrame
+Instance.new("UICorner", RadarBtn).CornerRadius = UDim.new(0, 6)
+
+local ScanOnceBtn = Instance.new("TextButton")
+ScanOnceBtn.Size = UDim2.new(1, -20, 0, 30)
+ScanOnceBtn.Position = UDim2.new(0, 10, 0, 110)
+ScanOnceBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 150)
+ScanOnceBtn.Text = "Treat Room 8 (1x)"
+ScanOnceBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ScanOnceBtn.Font = Enum.Font.GothamBold
+ScanOnceBtn.TextSize = 14
+ScanOnceBtn.Parent = ContentFrame
+Instance.new("UICorner", ScanOnceBtn).CornerRadius = UDim.new(0, 6)
+
+-- ==========================================
+-- LOGIC & UTILITIES 
+-- ==========================================
+-- [ FIX ]: Anti-Spam Console Logging
+local function setStatus(text)
+    StatusLabel.Text = "Status: " .. text
+    if Config.ShowConsoleLogs and text ~= lastLoggedText then 
+        print("[Room8-Safe] " .. text) 
+        lastLoggedText = text
+    end
+end
+
+local function getShiftText()
+    local pGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if pGui then
+        local shiftUI = pGui:FindFirstChild("Shift")
+        if shiftUI then
+            local frame = shiftUI:FindFirstChild("Frame")
+            local header = frame and frame:FindFirstChild("header")
+            if header and header:IsA("TextLabel") then return header.Text end
+        end
+    end
+    return nil
+end
+
+local function updateVisualRadar(id, pos, radius, color, isVisible)
+    if not isVisible then
+        if _G.Room8Auto_Radars[id] then
+            _G.Room8Auto_Radars[id]:Destroy()
+            _G.Room8Auto_Radars[id] = nil
+        end
+        return
+    end
+    
+    local radar = _G.Room8Auto_Radars[id]
+    if not radar or not radar.Parent then
+        radar = Instance.new("Part")
+        radar.Name = "Radar_" .. id
+        radar.Shape = Enum.PartType.Cylinder
+        radar.Anchored = true
+        radar.CanCollide = false
+        radar.CanQuery = false
+        radar.CastShadow = false
+        radar.Material = Enum.Material.Neon
+        radar.Transparency = 0.85
+        radar.Color = color
+        radar.Parent = workspace
+        _G.Room8Auto_Radars[id] = radar
+    end
+    
+    radar.Size = Vector3.new(0.1, radius * 2, radius * 2)
+    radar.CFrame = CFrame.new(pos.X, pos.Y - 1.45, pos.Z) * CFrame.Angles(0, 0, math.rad(90))
+end
+
+_G.Room8Auto_RadarLoop = task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            local room8 = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room8")
+            if room8 then
+                local bedPart = room8:FindFirstChild("Minigame") and room8.Minigame:FindFirstChild("Bed") and room8.Minigame.Bed:FindFirstChild("InBed")
+                if bedPart then
+                    updateVisualRadar("Room8", bedPart.Position, Config.PatientBedRadius, Color3.fromRGB(255, 100, 0), isRadarVisible)
+                else
+                    updateVisualRadar("Room8", Config.Room8CFrame.Position, Config.PatientBedRadius, Color3.fromRGB(255, 100, 0), isRadarVisible)
+                end
+            end
+        end)
+    end
+end)
+
+local function teleportTo(targetCFrame)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        root.CFrame = targetCFrame
+        root.AssemblyLinearVelocity = Vector3.zero
+        task.wait(Config.WaitTime)
+    end
+end
+
+local function isRoom8HealingDone(room8)
+    if not room8 then return false end
+    local ui = room8:FindFirstChild("Minigame") and room8.Minigame:FindFirstChild("TV") and room8.Minigame.TV:FindFirstChild("Screen") and room8.Minigame.TV.Screen:FindFirstChild("UI")
+    local healing = ui and ui:FindFirstChild("Healing")
+    if healing and healing:IsA("GuiObject") and healing.Visible == true then return true end
+    return false
+end
+
+local function getPendingMedicinesRoom8(reportFolder)
+    local pending = {}
+    if not reportFolder then return pending end
+    local invFolder = reportFolder:FindFirstChild("inv")
+    if not invFolder then return pending end
+    
+    for _, itemReq in ipairs(invFolder:GetChildren()) do
+        if not itemReq:IsA("UIListLayout") then 
+            local checkMark = itemReq:FindFirstChild("check")
+            if not checkMark or (checkMark and checkMark.Visible == false) then
+                table.insert(pending, itemReq.Name) 
+            end
+        end
+    end
+    return pending
+end
+
+-- ==========================================
+-- INVENTORY & ITEM FETCHING
+-- ==========================================
+local function checkTotalInventory()
+    local targetCount = 0
+    local targetItems = {} 
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    local character = LocalPlayer.Character
+    
+    local function processTool(item)
+        if item:IsA("Tool") and table.find(ItemList, item.Name) then
+            targetCount = targetCount + 1
+            table.insert(targetItems, item)
+        end
+    end
+
+    if backpack then for _, item in ipairs(backpack:GetChildren()) do processTool(item) end end
+    if character then for _, item in ipairs(character:GetChildren()) do processTool(item) end end
+    return targetCount, targetItems
+end
+
+local function trashItem(toolToTrash)
+    local char = LocalPlayer.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local hum = char and char:FindFirstChild("Humanoid")
+    local trashBin = workspace:FindFirstChild("Trash", true) 
+    
+    if not root or not hum or not toolToTrash or not trashBin then return false end
+    
+    local prompt = trashBin:FindFirstChild("PP") or trashBin:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        hum:EquipTool(toolToTrash)
+        
+        local targetPart = trashBin:IsA("BasePart") and trashBin or trashBin.PrimaryPart or trashBin:FindFirstChildWhichIsA("BasePart")
+        if targetPart then root.CFrame = targetPart.CFrame * CFrame.new(0, 3, 0) end
+        
+        root.AssemblyLinearVelocity = Vector3.zero
+        task.wait(Config.WaitTime)
+        
+        prompt.RequiresLineOfSight = false
+        prompt.MaxActivationDistance = math.huge
+        if type(fireproximityprompt) == "function" then fireproximityprompt(prompt, 1, true) else prompt:InputHoldBegan() task.wait(0.2) prompt:InputHoldEnded() end
+        
+        _G.Room8Auto_LastActionTick = tick()
+        task.wait(Config.WaitTime) 
+        return true
+    end
+    return false
+end
+
+local function fetchItem(targetName)
+    local rootPart = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return false end
+
+    setStatus("Mengambil: " .. targetName)
+
+    local totalAmount, currentItems = checkTotalInventory()
+    if totalAmount >= Config.MaxInventory and #currentItems > 0 then
+        local trashed = trashItem(currentItems[1])
+        if not trashed then return false end 
+    end
+
+    for _, item in ipairs(workspace:GetDescendants()) do
+        if item.Name == targetName then
+            local prompt = item:FindFirstChild("PP") or item:FindFirstChildWhichIsA("ProximityPrompt")
+            local itemPart = item:IsA("BasePart") and item or item:FindFirstChildWhichIsA("BasePart")
+            
+            if prompt and itemPart then
+                rootPart.CFrame = itemPart.CFrame * CFrame.new(0, 3, 0)
+                rootPart.AssemblyLinearVelocity = Vector3.zero
+                task.wait(Config.WaitTime)
+                
+                prompt.RequiresLineOfSight = false
+                prompt.MaxActivationDistance = math.huge
+                if type(fireproximityprompt) == "function" then fireproximityprompt(prompt, 1, true) else prompt:InputHoldBegan() task.wait(0.2) prompt:InputHoldEnded() end
+                
+                _G.Room8Auto_LastActionTick = tick() 
+                task.wait(0.3) 
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- ==========================================
+-- MEDICAL & ROOM 8 LOGIC
+-- ==========================================
+local function simpleInteract(prompt, customHold)
+    if prompt and prompt:IsA("ProximityPrompt") then
+        local oldReq = prompt.RequiresLineOfSight
+        local oldDist = prompt.MaxActivationDistance
+        prompt.RequiresLineOfSight = false
+        prompt.MaxActivationDistance = math.huge
+        
+        if type(fireproximityprompt) == "function" then fireproximityprompt(prompt, 1, true)
+        else prompt:InputHoldBegan() task.wait(customHold or prompt.HoldDuration or 0.25) prompt:InputHoldEnded() end
+        
+        _G.Room8Auto_LastActionTick = tick() 
+        prompt.RequiresLineOfSight = oldReq
+        prompt.MaxActivationDistance = oldDist
+        task.wait(0.25) 
+    end
+end
+
+local function isRoom8Active()
+    local room = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room8")
+    if room then
+        local signLight = room:FindFirstChild("MainSign") and room.MainSign:FindFirstChild("Light")
+        if signLight and signLight:IsA("BasePart") and (signLight.BrickColor.Name == "Crimson" or signLight.Color == Color3.fromRGB(165, 0, 0)) then
+            if not isRoom8HealingDone(room) then return room end
+        end
+    end
+    return nil
+end
+
+local function executeRoom8Treatment(room8, activeShift)
+    local minigame = room8:FindFirstChild("Minigame")
+    if not minigame or getShiftText() ~= activeShift then return end
+
+    setStatus("--- SURGERY DIMULAI ---")
+    teleportTo(Config.Room8CFrame)
+
+    local ui = minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen") and minigame.TV.Screen:FindFirstChild("UI")
+    local reportFolder = ui and ui:FindFirstChild("Report")
+    local treatmentText = reportFolder and reportFolder:FindFirstChild("treatment")
+    local bed = minigame:FindFirstChild("Bed") and minigame.Bed:FindFirstChild("InBed")
+    local bedPart = bed and (bed:IsA("BasePart") and bed or bed:FindFirstChildWhichIsA("BasePart"))
+
+    setStatus("1/3 Menunggu fisik pasien di kasur...")
+    local targetNPC = nil
+    local waitNPC = 0
+    while not targetNPC and waitNPC < 20 do
+        if getShiftText() ~= activeShift then return end
+        if workspace:FindFirstChild("NPCs") then
+            for _, npc in ipairs(workspace.NPCs:GetChildren()) do
+                local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
+                if part and bedPart and (part.Position - bedPart.Position).Magnitude < 40 then
+                    targetNPC = npc
+                    break
+                end
+            end
+        end
+        if not targetNPC then
+            task.wait(0.5)
+            waitNPC = waitNPC + 1
+        end
+    end
+
+    if not targetNPC then
+        setStatus("BATAL: Pasien gagal sampai ke kasur.")
+        return
+    end
+
+    setStatus("2/3 Menidurkan pasien...")
+    local sleepPP = bed and bed:FindFirstChild("PP2")
+    if sleepPP then
+        simpleInteract(sleepPP, 0.25)
+    end
+        
+    local waitLimit = 0
+    while treatmentText and treatmentText.Text ~= "BEGIN SURGERY:" and waitLimit < 20 do
+        _G.Room8Auto_LastActionTick = tick() 
+        if isRoom8HealingDone(room8) or getShiftText() ~= activeShift then return end
+        task.wait(1) 
+        waitLimit = waitLimit + 1
+    end
+
+    setStatus("3/3 Mulai Apply Treatment...")
+    local lastProgressTime = tick()
+    local lastPendingCount = -1
+
+    while true do
+        _G.Room8Auto_LastActionTick = tick() 
+
+        if getShiftText() ~= activeShift then setStatus("Shift berganti. Stop.") break end
+        if isRoom8HealingDone(room8) then setStatus("Surgery Selesai! Layar Hijau.") break end
+
+        local signLight = room8:FindFirstChild("MainSign") and room8.MainSign:FindFirstChild("Light")
+        if not signLight or (signLight.BrickColor.Name ~= "Crimson" and signLight.Color ~= Color3.fromRGB(165, 0, 0)) then break end
+
+        local pendingMeds = getPendingMedicinesRoom8(reportFolder)
+        if #pendingMeds ~= lastPendingCount then
+            lastPendingCount = #pendingMeds
+            lastProgressTime = tick() 
+        end
+
+        if tick() - lastProgressTime >= Config.StuckTimeout then 
+            setStatus("Local Loop Timeout. Skip.")
+            break 
+        end
+
+        if #pendingMeds == 0 then
+            task.wait(1)
+            continue
+        end
+
+        local medsReadyToGive = {}
+        for _, obat in ipairs(pendingMeds) do
+            local totalInv, _ = checkTotalInventory()
+            if LocalPlayer.Backpack:FindFirstChild(obat) or LocalPlayer.Character:FindFirstChild(obat) then
+                table.insert(medsReadyToGive, obat)
+            elseif totalInv < Config.MaxInventory then
+                if fetchItem(obat) then table.insert(medsReadyToGive, obat) end
+            end
+        end
+
+        if #medsReadyToGive > 0 then
+            local applyPP = bed and bed:FindFirstChild("PP")
+            if applyPP then
+                teleportTo(Config.Room8CFrame) 
+                
+                for _, obat in ipairs(medsReadyToGive) do
+                    local tool = LocalPlayer.Backpack:FindFirstChild(obat) or LocalPlayer.Character:FindFirstChild(obat)
+                    if tool then 
+                        LocalPlayer.Character.Humanoid:EquipTool(tool) 
+                        task.wait(0.4)
+                    end
+                    
+                    setStatus("Menerapkan: " .. obat)
+                    simpleInteract(applyPP, 0.25) 
+                end
+                task.wait(1.5) 
+            end
+        else
+            task.wait(1)
+        end
+    end
+end
+
+-- ==========================================
+-- SAFE MAIN EXECUTOR (WORKER THREAD)
+-- ==========================================
+local function botCycleRoom8()
+    local activeShift = getShiftText()
+    
+    if not activeShift then
+        if not isBotIdle then -- Hanya teleport jika sebelumnya belum idle
+            teleportTo(Config.IdleCFrame)
+            isBotIdle = true
+        end
+        setStatus("Istirahat/Luar Shift...")
+        task.wait(2)
+        return
+    end
+
+    local room8 = isRoom8Active()
+    if room8 then
+        isBotIdle = false -- Bot menemukan kerjaan, status idle dibatalkan
+        pcall(function() executeRoom8Treatment(room8, activeShift) end)
+    else
+        if not isBotIdle then -- Hanya teleport 1x jika sebelumnya tidak di posisi idle
+            teleportTo(Config.IdleCFrame)
+            isBotIdle = true
+        end
+        setStatus("Menunggu Kasus Room 8 (" .. activeShift .. ")...")
+        task.wait(Config.ScanDelay)
+    end
+end
+
+local function startWorkerRoom8()
+    if _G.Room8Auto_Worker then task.cancel(_G.Room8Auto_Worker) end
+    _G.Room8Auto_Worker = task.spawn(function()
+        while autoScanEnabled do
+            if not isBusy then
+                isBusy = true
+                _G.Room8Auto_LastActionTick = tick() 
+                pcall(botCycleRoom8)
+                isBusy = false
+            else
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+-- ==========================================
+-- GUI BUTTON EVENTS & WATCHDOG
+-- ==========================================
+local isMinimized = false
+MinimizeBtn.MouseButton1Click:Connect(function()
+    isMinimized = not isMinimized
+    if isMinimized then
+        MainFrame.Size = UDim2.new(0, 250, 0, 30)
+        ContentFrame.Visible = false
+        MinimizeBtn.Text = "+"
+    else
+        MainFrame.Size = UDim2.new(0, 250, 0, 180)
+        ContentFrame.Visible = true
+        MinimizeBtn.Text = "-"
+    end
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+    autoScanEnabled = false
+    isBusy = false 
+    isRadarVisible = false
+    isBotIdle = false -- Reset state saat GUI di close
+    if _G.Room8Auto_Watchdog then task.cancel(_G.Room8Auto_Watchdog) end
+    if _G.Room8Auto_Worker then task.cancel(_G.Room8Auto_Worker) end
+    if _G.Room8Auto_RadarLoop then task.cancel(_G.Room8Auto_RadarLoop) end
+    if _G.Room8Auto_Radars then
+        for _, radar in pairs(_G.Room8Auto_Radars) do if radar then radar:Destroy() end end
+    end
+    _G.Room8Auto_Radars = {}
+    ScreenGui:Destroy()
+end)
+
+RadarBtn.MouseButton1Click:Connect(function()
+    isRadarVisible = not isRadarVisible
+    if isRadarVisible then
+        RadarBtn.Text = "SHOW RADAR: ON"
+        RadarBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+    else
+        RadarBtn.Text = "SHOW RADAR: OFF"
+        RadarBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        for _, radar in pairs(_G.Room8Auto_Radars) do
+            if radar then radar:Destroy() end
+        end
+        _G.Room8Auto_Radars = {}
+    end
+end)
+
+ScanOnceBtn.MouseButton1Click:Connect(function()
+    if autoScanEnabled then
+        setStatus("Matikan Auto-Scan dulu jika ingin Manual!")
+        return
+    end
+
+    if isBusy then return end
+    task.spawn(function()
+        isBusy = true
+        botCycleRoom8() 
+        teleportTo(Config.IdleCFrame)
+        if not StatusLabel.Text:match("Idle") and not StatusLabel.Text:match("Istirahat") then 
+            setStatus("Manual Selesai (Standby).") 
+        end
+        isBusy = false
+        isBotIdle = false -- Reset manual
+    end)
+end)
+
+ToggleAutoBtn.MouseButton1Click:Connect(function()
+    autoScanEnabled = not autoScanEnabled
+    if autoScanEnabled then
+        ToggleAutoBtn.Text = "Auto Room 8: ON"
+        ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+        setStatus("Auto Room 8 menyala. Memantau...")
+        
+        isBusy = false 
+        isBotIdle = false -- Reset idle di awal auto-scan
+        _G.Room8Auto_LastActionTick = tick()
+        local lastShift = getShiftText()
+        startWorkerRoom8()
+        
+        if _G.Room8Auto_Watchdog then task.cancel(_G.Room8Auto_Watchdog) end
+        _G.Room8Auto_Watchdog = task.spawn(function()
+            while autoScanEnabled do
+                task.wait(1)
+                
+                local currentShift = getShiftText()
+                local isShiftChanged = (currentShift ~= lastShift and currentShift ~= nil and lastShift ~= nil)
+                local isStuck = isBusy and (tick() - _G.Room8Auto_LastActionTick > Config.GlobalStuckTimeout)
+
+                if isShiftChanged or isStuck then
+                    if isShiftChanged then
+                        setStatus("Shift Berganti! HARD-RESET...")
+                    else
+                        setStatus("SYSTEM STUCK! AUTO HARD-RESET...")
+                    end
+                    
+                    if _G.Room8Auto_Worker then task.cancel(_G.Room8Auto_Worker) end
+                    
+                    isBusy = false
+                    isBotIdle = false
+                    lastShift = currentShift
+                    teleportTo(Config.IdleCFrame)
+                    task.wait(2)
+                    
+                    if autoScanEnabled then
+                        _G.Room8Auto_LastActionTick = tick()
+                        startWorkerRoom8()
+                    end
+                end
+                
+                if currentShift then lastShift = currentShift end
+            end
+        end)
+    else
+        ToggleAutoBtn.Text = "Auto Room 8: OFF"
+        ToggleAutoBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+        if _G.Room8Auto_Watchdog then task.cancel(_G.Room8Auto_Watchdog) end
+        if _G.Room8Auto_Worker then task.cancel(_G.Room8Auto_Worker) end
+        isBusy = false 
+        isBotIdle = false
+        setStatus("Dimatikan.")
+    end
+end)
