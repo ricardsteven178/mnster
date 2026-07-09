@@ -1,5 +1,5 @@
 -- ==========================================
--- AUTO DOCTOR: ROOM 6 STANDALONE (ANTI-KABUR & RADAR V26)
+-- AUTO DOCTOR: ROOM 6 STANDALONE (ANTI-KABUR & RADAR V26) work cuman tidak work ketika ada pengulangan pasien ruang sama
 -- ==========================================
 
 if _G.Room6_Main then _G.Room6_Main:Destroy() end
