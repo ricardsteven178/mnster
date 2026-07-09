@@ -1,5 +1,5 @@
 -- ==========================================
--- ANTI DOUBLE EXECUTE & CLEANUP
+-- ANTI DOUBLE EXECUTE & CLEANUP work kurang sempurnakan bagian kecepatan dan juga efisiensi ngambil itemnya
 -- ==========================================
 if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end
 if _G.AutoDoctor_Watchdog then task.cancel(_G.AutoDoctor_Watchdog) end
