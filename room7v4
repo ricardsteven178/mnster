@@ -29,21 +29,19 @@ local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Config = {
     ShowConsoleLogs = true,
     WaitTime = 0.5,
-    MaxInventory = 5,          -- Akan dikalibrasi otomatis oleh sistem Notif
+    MaxInventory = 5,
     ScanDelay = 3,
-    StuckTimeout = 25,         -- Anti-Ghost Prompt Timeout (Detik)
-    GlobalStuckTimeout = 45,   -- Hard-Reset Timeout
-    BlacklistDuration = 60,    -- Durasi blacklist jika Room 7 bugged
-    PatientBedRadius = 12,
+    StuckTimeout = 25,
+    GlobalStuckTimeout = 45,
+    BlacklistDuration = 60,
+    PatientBedRadius = 15, 
     InjectionDelay = 1,
     ShowRadar = true,
     IdleCFrame = CFrame.new(-102.853859, 3.41253114, 2.83109426, 0.660403967, -5.88231437e-08, -0.750910521, 1.04164357e-07, 1, 1.32737652e-08, 0.750910521, -8.69841585e-08, 0.660403967)
 }
 
 local Room7_CFrames = {
-    Step1 = CFrame.new(-105.403381, 3.45753121, 47.803978, 0.725760221, -4.12834709e-08, -0.68794775, 3.55443142e-08, 1, -2.25116281e-08, 0.68794775, -8.11458634e-09, 0.725760221),
-    Step2 = CFrame.new(-108.28727, 3.45753074, 56.7980232, 0.240545362, 7.5386497e-09, -0.970637918, 1.96511998e-08, 1, 1.26366944e-08, 0.970637918, -2.21138965e-08, 0.240545362),
-    Step3 = CFrame.new(-125.265869, 3.45753074, 60.2830925, -0.990286827, 4.62577932e-09, 0.139039472, 2.54290988e-09, 1, -1.5158065e-08, -0.139039472, -1.46572674e-08, -0.990286827)
+    Step2 = CFrame.new(-108.28727, 3.45753074, 56.7980232, 0.240545362, 7.5386497e-09, -0.970637918, 1.96511998e-08, 1, 1.26366944e-08, 0.970637918, -2.21138965e-08, 0.240545362)
 }
 
 local ItemList = {
@@ -52,7 +50,7 @@ local ItemList = {
     "Antibiotics", "Scalpel", "Scissors", "Organ", "Transplant"
 }
 
--- STATE VARIABLES
+-- STATE VARIABLES & TRACKERS
 local isAutoPlaying = false
 local isBusy = false
 local isRadarVisible = Config.ShowRadar
@@ -60,14 +58,16 @@ local totalHand, totalSkull = 0, 0
 local minigameConnections = {}
 _G.AutoRoom7_LastActionTick = tick()
 _G.AutoRoom7_BlacklistTime = 0 
-_G.AutoRoom7_IsIdle = false  -- FLAG IDLE SEKALI JALAN
+_G.AutoRoom7_IsIdle = false 
+_G.AutoRoom7_LastPatient = nil 
+_G.AutoRoom7_LegitHealing = false 
 _G.LastStatus = ""
 
 local ID_HAND = "rbxassetid://76833679466645"
 local ID_SKULL = "rbxassetid://2766332187"
 
 -- ==========================================
--- GUI CREATION (V84 STYLE)
+-- GUI CREATION
 -- ==========================================
 local guiParent = (RunService:IsStudio() and LocalPlayer:WaitForChild("PlayerGui")) or pcall(function() return CoreGui.RobloxGui end) and CoreGui or LocalPlayer:WaitForChild("PlayerGui")
 local ScreenGui = Instance.new("ScreenGui", guiParent)
@@ -188,7 +188,7 @@ local function setStatus(text)
 end
 
 -- ==========================================
--- LOGIC & UTILITIES (INCLUDES EXTRA SAFETY)
+-- LOGIC & UTILITIES
 -- ==========================================
 local function unequipAll()
     pcall(function()
@@ -416,49 +416,33 @@ local function fetchItem(targetName, pendingMedsList)
 end
 
 -- ==========================================
--- ANOMALY DETECTOR & SMART DIAGNOSTIC
+-- UNIVERSAL PATIENT & PROMPT SCANNER
 -- ==========================================
-local function checkAnomalyStatus(bedPart)
-    if not bedPart then return false end
-    if workspace:FindFirstChild("NPCs") then
-        for _, npc in ipairs(workspace.NPCs:GetChildren()) do
-            local p = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
-            if p and (p.Position - bedPart.Position).Magnitude <= Config.PatientBedRadius then
-                local attr = npc:GetAttributes()
-                if attr.Skinwalker or attr.SkinwalkerEasy or attr.PenaltyWhenLettingIn or attr.PhotoEffect == "CursedPhoto" or attr.PhotoEffect2 == "CursedPhoto" then 
-                    return true 
-                end
+local function findPatientModel(bedPart)
+    if not bedPart then return nil end
+    local pos = bedPart.Position
+    
+    local function checkObj(obj)
+        if not obj:IsA("Model") or obj == LocalPlayer.Character then return nil end
+        local part = obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart")
+        if part and (part.Position - pos).Magnitude <= Config.PatientBedRadius then
+            if obj:FindFirstChildOfClass("Humanoid") or obj:FindFirstChildWhichIsA("ProximityPrompt", true) then
+                return obj
             end
         end
+        return nil
     end
-    return false
-end
-
-local function getPromptsNearBed(roomPath, bedPart)
-    local prompts = {}
-    if not roomPath or not bedPart then return prompts end
     
     if workspace:FindFirstChild("NPCs") then
         for _, npc in ipairs(workspace.NPCs:GetChildren()) do
-            local p = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
-            if p and (p.Position - bedPart.Position).Magnitude <= Config.PatientBedRadius then
-                for _, desc in ipairs(npc:GetDescendants()) do
-                    if desc:IsA("ProximityPrompt") and desc.Enabled then table.insert(prompts, desc) end
-                end
-            end
+            local found = checkObj(npc)
+            if found then return found end
         end
     end
-    return prompts
-end
-
-local function getActivePrompt(parent, ...)
-    local current = parent
-    local path = {...}
-    for _, name in ipairs(path) do
-        if not current then return nil end
-        current = current:FindFirstChild(name)
+    for _, obj in ipairs(workspace:GetChildren()) do
+        local found = checkObj(obj)
+        if found then return found end
     end
-    if current and current:IsA("ProximityPrompt") and current.Enabled then return current end
     return nil
 end
 
@@ -475,6 +459,126 @@ local function getRoom7PendingMedicines(reportUI)
         end
     end
     return pending
+end
+
+-- ==========================================
+-- [NEW] THE DYNAMIC PROMPT DETECTOR
+-- ==========================================
+-- Tidak lagi menggunakan jalur kaku. Membaca Teks Prompt secara mendalam!
+local function hasActivePrompts(room7, bedPart)
+    -- 1. Cek Luka Bakar / DNA pada fisik Pasien
+    local npc = findPatientModel(bedPart)
+    if npc then
+        for _, desc in ipairs(npc:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and desc.Enabled then
+                local actText = string.lower(desc.ActionText or "")
+                local name = string.lower(desc.Name or "")
+                if name == "firepp" or actText:match("burns") or actText:match("dna") or name:match("dna") then
+                    return true
+                end
+            end
+        end
+    end
+
+    -- 2. DYNAMIC SCANNER: Cari tombol apapun di area Minigame (Prepare, Begin, dll)
+    local minigame = room7:FindFirstChild("Minigame")
+    if minigame then
+        local validActionTexts = {"prepare", "set up", "turn on", "begin", "process", "collect", "apply"}
+        for _, prompt in ipairs(minigame:GetDescendants()) do
+            if prompt:IsA("ProximityPrompt") and prompt.Enabled then
+                local actText = string.lower(prompt.ActionText or "")
+                for _, keyword in ipairs(validActionTexts) do
+                    if actText:match(keyword) then
+                        return true
+                    end
+                end
+            end
+        end
+        
+        -- 3. Cek Tagihan Obat di TV
+        local tv = minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen")
+        local reportUI = tv and tv:FindFirstChild("UI") and tv.UI:FindFirstChild("Report")
+        if reportUI and reportUI.Visible then
+            local pendingMeds = getRoom7PendingMedicines(reportUI)
+            if #pendingMeds > 0 then return true end
+        end
+    end
+
+    return false
+end
+
+-- ==========================================
+-- THE MINIGAME UI DETECTOR (UNLOCK MOUSE)
+-- ==========================================
+local function isMinigameUIOpen()
+    local mg = PlayerGui:FindFirstChild("Minigame")
+    if mg then
+        local unlockMouse = mg:FindFirstChild("UnlockMouse")
+        if unlockMouse and unlockMouse:IsA("GuiObject") and unlockMouse.Visible then
+            return true
+        end
+    end
+    return false
+end
+
+-- ==========================================
+-- ANOMALY DETECTOR & STATUS CHECKER
+-- ==========================================
+local function checkAnomalyStatus(bedPart)
+    local npc = findPatientModel(bedPart)
+    if npc then
+        local attr = npc:GetAttributes()
+        if attr.Skinwalker or attr.SkinwalkerEasy or attr.PenaltyWhenLettingIn or attr.PhotoEffect == "CursedPhoto" or attr.PhotoEffect2 == "CursedPhoto" then 
+            return true 
+        end
+    end
+    return false
+end
+
+local function checkRoom7Status()
+    local room7 = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room7")
+    if not room7 then return nil, false end
+
+    if _G.AutoRoom7_BlacklistTime > 0 and (tick() - _G.AutoRoom7_BlacklistTime < Config.BlacklistDuration) then
+        return nil, false
+    end
+
+    local minigame = room7:FindFirstChild("Minigame")
+    local bed = minigame and minigame:FindFirstChild("Bed") and minigame.Bed:FindFirstChild("InBed")
+    
+    local currentPatient = findPatientModel(bed)
+
+    if currentPatient ~= _G.AutoRoom7_LastPatient then
+        _G.AutoRoom7_LastPatient = currentPatient
+        _G.AutoRoom7_LegitHealing = false 
+    end
+
+    local tv = minigame and minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen")
+    local healingUI = tv and tv:FindFirstChild("UI") and tv.UI:FindFirstChild("Healing")
+    local isHealing = (healingUI and healingUI.Visible == true)
+
+    if not isHealing then
+        _G.AutoRoom7_LegitHealing = true 
+    end
+
+    if isHealing and _G.AutoRoom7_LegitHealing then 
+        if not hasActivePrompts(room7, bed) then
+            return nil, true 
+        end
+    end
+    
+    if hasActivePrompts(room7, bed) then
+        return room7, false
+    end
+
+    local signLight = room7:FindFirstChild("MainSign") and room7.MainSign:FindFirstChild("Light")
+    local hasPhysicalPatient = (currentPatient ~= nil)
+
+    if hasPhysicalPatient then return room7, false end
+    local isLightRed = signLight and (signLight.BrickColor.Name == "Crimson" or signLight.Color == Color3.fromRGB(165, 0, 0))
+    if isLightRed then return room7, false end
+
+    return nil, false
 end
 
 -- ==========================================
@@ -607,40 +711,17 @@ local function getShiftText()
     return nil
 end
 
-local function isRoom7Active()
-    local room7 = workspace:FindFirstChild("Rooms") and workspace.Rooms:FindFirstChild("Emergency") and workspace.Rooms.Emergency:FindFirstChild("Room7")
-    if not room7 then return nil end
-
-    if _G.AutoRoom7_BlacklistTime > 0 and (tick() - _G.AutoRoom7_BlacklistTime < Config.BlacklistDuration) then
-        return nil -- Room 7 sedang di-blacklist karena Stuck/Ghost Prompt
-    end
-
-    local minigame = room7:FindFirstChild("Minigame")
-    local bed = minigame and minigame:FindFirstChild("Bed") and minigame.Bed:FindFirstChild("InBed")
-    local signLight = room7:FindFirstChild("MainSign") and room7.MainSign:FindFirstChild("Light")
-    
-    local hasPhysicalPatient = false
-    if bed and workspace:FindFirstChild("NPCs") then
-        for _, npc in ipairs(workspace.NPCs:GetChildren()) do
-            local part = npc.PrimaryPart or npc:FindFirstChildWhichIsA("BasePart")
-            if part and (part.Position - bed.Position).Magnitude < 15 then
-                hasPhysicalPatient = true; break
-            end
-        end
-    end
-
-    if hasPhysicalPatient then return room7 end
-    local isLightRed = signLight and (signLight.BrickColor.Name == "Crimson" or signLight.Color == Color3.fromRGB(165, 0, 0))
-    if isLightRed then return room7 end
-
-    return nil
-end
-
 -- ==========================================
 -- THE ULTIMATE ROOM 7 EXECUTION LOGIC
 -- ==========================================
 local function executeRoom7(room7, activeShift)
-    -- ANTI-CULLING / TELEPORT AWAL
+    if isMinigameUIOpen() then
+        setStatus("Memainkan Minigame (Menunggu)...")
+        _G.AutoRoom7_LastActionTick = tick() 
+        task.wait(1)
+        return
+    end
+
     local char = LocalPlayer.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if root and (root.Position - Room7_CFrames.Step2.Position).Magnitude > 20 then
@@ -655,50 +736,60 @@ local function executeRoom7(room7, activeShift)
     local tv = minigame:FindFirstChild("TV") and minigame.TV:FindFirstChild("Screen")
     local bedPart = minigame:FindFirstChild("Bed") and minigame.Bed:FindFirstChild("InBed")
     
-    -- 1. CEK STATUS SELESAI
     local healingUI = tv and tv:FindFirstChild("UI") and tv.UI:FindFirstChild("Healing")
-    if healingUI and healingUI.Visible == true then
-        setStatus("Pasien Sembuh / Clear")
-        task.wait(2) 
-        return 
-    end
-
-    -- 2. DYNAMIC CHECKS (BURNS, DNA)
-    local dynamicPrompts = getPromptsNearBed(room7, bedPart)
-    for _, desc in ipairs(dynamicPrompts) do
-        local actText = string.lower(desc.ActionText or "")
-        local name = string.lower(desc.Name or "")
-        
-        if actText:match("inspect") then
-            -- Skip inspect
-        elseif name == "firepp" or actText:match("burns") then
-            local hasOintment = LocalPlayer.Backpack:FindFirstChild("Ointment") or LocalPlayer.Character:FindFirstChild("Ointment")
-            if not hasOintment then fetchItem("Ointment", {"Ointment"}) end
-            
-            teleportToTarget(desc.Parent)
-            if safeEquip("Ointment") then
-                setStatus("Mengoleskan Ointment (Treat Burns)...")
-                simpleInteract(desc, 3, false)
-                return
-            end
-        elseif actText:match("dna") or name:match("dna") then
-            unequipAll() 
-            setStatus("Mengeklik: Take DNA Sample...")
-            simpleInteract(desc, 0.5, true)
-            return
+    if healingUI and healingUI.Visible == true and _G.AutoRoom7_LegitHealing then
+        if not hasActivePrompts(room7, bedPart) then
+            setStatus("Pasien Sembuh / Clear")
+            task.wait(2) 
+            return 
         end
     end
 
-    -- 3. CEK PRIORITAS ABSOLUT: TV MEDS & ANOMALY DETECTOR
+    -- 1. CEK LUKA BAKAR ATAU DNA
+    local npc = findPatientModel(bedPart)
+    if npc then
+        for _, desc in ipairs(npc:GetDescendants()) do
+            if desc:IsA("ProximityPrompt") and desc.Enabled then
+                local actText = string.lower(desc.ActionText or "")
+                local name = string.lower(desc.Name or "")
+                
+                if name == "firepp" or actText:match("burns") then
+                    local hasOintment = LocalPlayer.Backpack:FindFirstChild("Ointment") or LocalPlayer.Character:FindFirstChild("Ointment")
+                    if not hasOintment then fetchItem("Ointment", {"Ointment"}) end
+                    
+                    teleportToTarget(desc.Parent)
+                    if safeEquip("Ointment") then
+                        setStatus("Mengoleskan Ointment (Treat Burns)...")
+                        simpleInteract(desc, 3, false)
+                        task.wait(1.5) 
+                        return
+                    end
+                elseif actText:match("dna") or name:match("dna") then
+                    unequipAll() 
+                    setStatus("Mengeklik: Take DNA Sample...")
+                    simpleInteract(desc, 0.5, true)
+                    task.wait(1.5)
+                    return
+                end
+            end
+        end
+    end
+
+    -- 2. CEK TV MEDS & ANOMALI
     local reportUI = tv and tv:FindFirstChild("UI") and tv.UI:FindFirstChild("Report")
     local invFolder = reportUI and reportUI:FindFirstChild("inv", true)
     local tvHasMeds = (reportUI and reportUI.Visible and invFolder and #invFolder:GetChildren() > 1)
-    local inBedPP = getActivePrompt(minigame, "Bed", "InBed", "PP")
+    
+    local inBedPP = nil
+    for _, prompt in ipairs(minigame:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") and prompt.Parent and prompt.Parent.Name == "InBed" then
+            inBedPP = prompt; break
+        end
+    end
 
     if tvHasMeds then
         local pendingMeds = getRoom7PendingMedicines(reportUI)
         
-        -- ANOMALY DETECTOR SYSTEM
         if #pendingMeds > 0 and checkAnomalyStatus(bedPart) then
             local wrongMedicine = "Medicine"
             for _, item in ipairs(ItemList) do
@@ -717,7 +808,6 @@ local function executeRoom7(room7, activeShift)
             return
         end
 
-        -- NORMAL MEDICATION
         if #pendingMeds > 0 then
             for _, obat in ipairs(pendingMeds) do
                 local hasIt = LocalPlayer.Backpack:FindFirstChild(obat) or LocalPlayer.Character:FindFirstChild(obat)
@@ -738,71 +828,30 @@ local function executeRoom7(room7, activeShift)
         return 
     end
 
-    -- 4. BACA TOMBOL HARDCODED ROOM 7
-    local pp2        = getActivePrompt(minigame, "Bed", "InBed", "PP2")
-    local standIV    = getActivePrompt(minigame, "StandIV", "PP")
-    local machine    = getActivePrompt(minigame, "Machine", "PP")
-    local hm         = getActivePrompt(minigame, "HeartMonitor", "PP")
-    local monitorPP2 = getActivePrompt(minigame, "Monitor", "PP2")
-    local collectPP  = getCollectPrompt(minigame)
-    
-    -- 5. EKSEKUSI STATE
-    if pp2 then
-        setStatus("Mengeksekusi: Prepare Patient")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step1)
-        simpleInteract(pp2, 0.25)
-    elseif standIV then
-        setStatus("Mengeksekusi: Set Up IV")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step1)
-        simpleInteract(standIV, 0.5)
-    elseif machine then
-        setStatus("Mengeksekusi: Turn On Machine")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step2)
-        simpleInteract(machine, 0.5)
-    elseif hm then
-        setStatus("Mengeksekusi: Begin Minigame")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step2)
-        simpleInteract(hm, 0.25)
-        task.wait(0.5)
-    elseif monitorPP2 then
-        setStatus("Mengeksekusi: Process Results")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step3)
-        simpleInteract(monitorPP2, 0.25)
-        task.wait(1)
-    elseif collectPP then
-        setStatus("Mengeksekusi: Collect Results")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step3)
-        simpleInteract(collectPP, 0.5)
-        task.wait(0.5)
-    elseif inBedPP then
-        setStatus("Membuka Resep TV...")
-        unequipAll()
-        teleportToTarget(Room7_CFrames.Step2)
-        simpleInteract(inBedPP, 0.25)
-        task.wait(1)
-    else
-        setStatus("Menunggu Reaksi Server / Minigame...")
-        task.wait(0.5)
-    end
-end
-
-function getCollectPrompt(minigame)
-    for _, desc in ipairs(minigame:GetDescendants()) do
-        if desc:IsA("ProximityPrompt") and desc.Enabled and (desc.ActionText:match("Collect") or desc.ActionText:match("collect")) then
-            return desc
+    -- 3. [NEW] DYNAMIC ACTION SCANNER (Membaca Text Tombol)
+    -- Tidak peduli step berapa, kalau ketemu tulisan ini, auto click dan teleport ke target!
+    local validActionTexts = {"prepare", "set up", "turn on", "begin", "process", "collect", "apply"}
+    for _, prompt in ipairs(minigame:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") and prompt.Enabled then
+            local actText = string.lower(prompt.ActionText or "")
+            for _, keyword in ipairs(validActionTexts) do
+                if actText:match(keyword) then
+                    setStatus("Mengeksekusi: " .. (prompt.ActionText or keyword))
+                    unequipAll()
+                    simpleInteract(prompt, 0.5, true) -- true = Auto Teleport ke tombol itu!
+                    task.wait(1)
+                    return
+                end
+            end
         end
     end
-    return nil
+
+    setStatus("Menunggu Reaksi Server / Minigame...")
+    task.wait(0.5)
 end
 
 -- ==========================================
--- WORKER THREAD & EVENT BINDINGS (FIXED IDLE)
+-- WORKER THREAD & EVENT BINDINGS
 -- ==========================================
 local function startWorker()
     if _G.AutoRoom7_Worker then task.cancel(_G.AutoRoom7_Worker) end
@@ -822,7 +871,8 @@ local function startWorker()
                     end
                     task.wait(2)
                 else
-                    local activeRoom = isRoom7Active()
+                    local activeRoom, isHealing = checkRoom7Status()
+                    
                     if activeRoom then
                         _G.AutoRoom7_IsIdle = false 
                         pcall(function() executeRoom7(activeRoom, activeShift) end)
@@ -830,6 +880,8 @@ local function startWorker()
                     else
                         if _G.AutoRoom7_BlacklistTime > 0 then
                             setStatus("[BLACKLIST] Menunggu Ghost Prompt Expired...")
+                        elseif isHealing then
+                            setStatus("Pasien Sembuh / Clear")
                         else
                             setStatus("Standby (Menunggu Pasien)...")
                         end
@@ -855,7 +907,6 @@ end
 table.insert(minigameConnections, PlayerGui.ChildAdded:Connect(function(c)
     if c.Name == "Minigame" then task.wait(0.3); HookMinigameGui(c) end
 end))
-
 local mgExists = PlayerGui:FindFirstChild("Minigame")
 if mgExists then HookMinigameGui(mgExists) end
 
@@ -888,7 +939,6 @@ ToggleAutoBtn.MouseButton1Click:Connect(function()
         local lastShift = getShiftText()
         startWorker()
         
-        -- Watchdog (Upgraded with Blacklist & Hard-Reset)
         if _G.AutoRoom7_Watchdog then task.cancel(_G.AutoRoom7_Watchdog) end
         _G.AutoRoom7_Watchdog = task.spawn(function()
             while isAutoPlaying do
@@ -980,4 +1030,4 @@ CloseBtn.MouseButton1Click:Connect(function()
     ScreenGui:Destroy()
 end)
 
-print("✅ Auto Room 7 Ultimate (With V84 Logic & Silent Idle) Loaded Successfully!")
+print("✅ Auto Room 7 Ultimate (With Dynamic Text Scanner) Loaded Successfully!")
