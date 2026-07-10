@@ -1,5 +1,5 @@
 -- ==========================================================
--- ☕ ULTIMATE AUTO-COFFEE V16.6 (BUG FIX RE-EXECUTE & ANTI-DESYNC)
+-- ☕ ULTIMATE AUTO-COFFEE V17 (STABLE ID & ANTI-SHIFT BUG)
 -- ==========================================================
 
 -- ==========================================
@@ -10,7 +10,7 @@ local Config = {
 	SimpanKopiBekas = 2,       
 	
 	BatasMinum = 95,           
-	JedaMinum = 1.5,           
+	JedaMinum = 1.5,           -- 🛡️ Ini sekarang juga jadi penahan Anti-Spam Klik Manual
 	DelayTeleport = 0.8,       
 	DelayKembali = 0.6,        
 	TargetSanityUI = "amount",
@@ -34,7 +34,7 @@ local LocalPlayer = Players.LocalPlayer
 -- GUI SETUP
 -- ==========================================
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "AutoCoffeeUI_V16_6"
+ScreenGui.Name = "AutoCoffeeUI_V17"
 ScreenGui.Parent = CoreGui
 
 local MainFrame = Instance.new("Frame")
@@ -54,7 +54,7 @@ local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, -70, 0, 30)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "☕ Auto-Coffee V16.6"
+Title.Text = "☕ Auto-Coffee V17"
 Title.TextColor3 = Color3.fromRGB(100, 255, 100)
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Font = Enum.Font.GothamBold
@@ -157,7 +157,7 @@ local function UpdateActionLog(text)
 end
 
 -- ==========================================
--- LOGIKA UI, VARIABEL & TABEL MEMORI SENSOR
+-- LOGIKA UI & VIRTUAL MEMORY STABLE ID (BARU)
 -- ==========================================
 local isAutoRunning = true  
 local isSystemActive = true 
@@ -168,7 +168,8 @@ local CoffeeTracker = {}
 local toolConnections = {} 
 local lastSipTime = {} 
 
-local TRACK_TAG = "TrackedByV16_6" -- 🛡️ Tag Unik Versi Terbaru
+local globalCoffeeCounter = 0 -- KTP Unik untuk setiap Kopi
+local TRACK_TAG = "TrackedByV17" 
 
 ToggleButton.MouseButton1Click:Connect(function()
 	isSystemActive = not isSystemActive
@@ -199,7 +200,6 @@ getgenv().KillAutoCoffee = function()
 	for _, tConn in pairs(toolConnections) do
 		if tConn then tConn:Disconnect() end
 	end
-	-- 🧹 BERSIHKAN STIKER MESIN AGAR RE-EXECUTE AMAN
 	for _, machine in ipairs(trackedMachines) do
 		if machine then machine:SetAttribute(TRACK_TAG, nil) end
 	end
@@ -210,7 +210,7 @@ getgenv().KillAutoCoffee = function()
 	table.clear(lastSipTime)
 	if ScreenGui and ScreenGui.Parent then ScreenGui:Destroy() end
 	getgenv().KillAutoCoffee = nil
-	ConsoleLog("✅ [AUTO-COFFEE V16.6 MATI TOTAL]")
+	ConsoleLog("✅ [AUTO-COFFEE V17 MATI TOTAL]")
 end
 CloseBtnX.MouseButton1Click:Connect(function() getgenv().KillAutoCoffee() end)
 
@@ -245,7 +245,7 @@ local function updateMachineStatusUI()
 end
 
 -- ==========================================
--- 📊 FUNGSI SELEKSI, FILTER & SENSOR KOPI
+-- 📊 FUNGSI SELEKSI & AUTO-SORT KOPI
 -- ==========================================
 local function getCoffeeDebugData()
 	local totalUtama = 0
@@ -268,6 +268,7 @@ local function getCoffeeDebugData()
 	scanFolder(backpack)
 	scanFolder(character)
 	
+	-- Pembersihan kopi yang sudah dihancurkan game (lenyap)
 	for toolInst, _ in pairs(CoffeeTracker) do
 		if not toolInst.Parent or (toolInst.Parent ~= backpack and toolInst.Parent ~= character) then
 			CoffeeTracker[toolInst] = nil
@@ -279,31 +280,44 @@ local function getCoffeeDebugData()
 		end
 	end
 	
-	for i, toolInst in ipairs(currentTools) do
+	-- Daftarkan kopi baru & beri KTP (ID Permanen)
+	for _, toolInst in ipairs(currentTools) do
 		if not CoffeeTracker[toolInst] then
-			CoffeeTracker[toolInst] = Config.MaxTegukPerKopi
+			globalCoffeeCounter = globalCoffeeCounter + 1
+			CoffeeTracker[toolInst] = {
+				sips = Config.MaxTegukPerKopi,
+				bornId = globalCoffeeCounter -- KTP Unik!
+			}
 		end
 		
+		-- Sensor Manual (Dilindungi Anti-Spam Sesuai JedaMinum)
 		if not toolConnections[toolInst] then
 			toolConnections[toolInst] = toolInst.Activated:Connect(function()
-				if not lastSipTime[toolInst] or (tick() - lastSipTime[toolInst]) > 1 then
+				if not lastSipTime[toolInst] or (tick() - lastSipTime[toolInst]) >= Config.JedaMinum then
 					lastSipTime[toolInst] = tick()
 					if CoffeeTracker[toolInst] then
-						CoffeeTracker[toolInst] -= 1
-						if CoffeeTracker[toolInst] <= 0 then
-							CoffeeTracker[toolInst] = nil 
-						end
+						CoffeeTracker[toolInst].sips = CoffeeTracker[toolInst].sips - 1
 					end
 				end
 			end)
 		end
-		
-		local sips = CoffeeTracker[toolInst]
+	end
+	
+	-- 🛡️ SORTING KTP: Agar label K1, K2 tidak lompat-lompat saat di-equip!
+	local sortedTools = {}
+	for _, t in ipairs(currentTools) do table.insert(sortedTools, t) end
+	table.sort(sortedTools, function(a, b) 
+		return CoffeeTracker[a].bornId < CoffeeTracker[b].bornId 
+	end)
+	
+	-- Kalkulasi Berdasarkan Urutan Asli
+	for _, toolInst in ipairs(sortedTools) do
+		local sips = CoffeeTracker[toolInst].sips
 		
 		if sips == 1 and totalBekas < Config.SimpanKopiBekas then
 			totalBekas += 1
 			savedBekasInstances[toolInst] = true
-			table.insert(sipsArray, "B:" .. sips .. "x")
+			table.insert(sipsArray, "B" .. totalBekas .. ":" .. sips .. "x")
 		else
 			totalUtama += 1
 			table.insert(sipsArray, "K" .. totalUtama .. ":" .. sips .. "x")
@@ -366,6 +380,7 @@ local function handleCoffeeDrinking()
 		end
 		
 		if validCoffeeToDrink then
+			-- Pemicu Minum Script (Otomatis ditangkap oleh Sensor Anti-Spam di atas)
 			validCoffeeToDrink:Activate() 
 			UpdateActionLog("☕ Teguk Kopi! Sanity: " .. currentSanity .. "%")
 			task.wait(Config.JedaMinum) 
@@ -430,7 +445,6 @@ local function takeCoffee(machine)
 end
 
 local function setupMachine(machine)
-	-- 🛡️ Menggunakan Tag Baru agar terhindar dari bug versi lama
 	if machine:GetAttribute(TRACK_TAG) then return end
 	machine:SetAttribute(TRACK_TAG, true)
 	table.insert(trackedMachines, machine)
@@ -478,4 +492,4 @@ task.spawn(function()
 	end
 end)
 
-ConsoleLog("☕ Auto-Coffee V16.6 (Fix Bug Execute) Aktif!")
+ConsoleLog("☕ Auto-Coffee V17 (ID Fix) Aktif!")
