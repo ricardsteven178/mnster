@@ -55,7 +55,7 @@ local scriptsByPlaceId = {
     [INGAME_PLACE_ID] = {
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/espallv2",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/casirV4_landasanbaru",
-        "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/auto_minum_kopi_V3",
+        "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/auto_minum_kopi_V4",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/toolsV1",
         --"https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/espallv2",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/0"--print
