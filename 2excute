@@ -56,7 +56,7 @@ local scriptsByPlaceId = {
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/room6v6",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/room7v6",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/room8v4",
-        "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/dokterV13",
+        "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/dokterV14",
         --"https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/toolsV1",
         --"https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/espallv3",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/0"--print
