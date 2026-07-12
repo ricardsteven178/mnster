@@ -2,7 +2,7 @@
 -- PENGATURAN DEFAULT STATE (SILAKAN UBAH)
 -- ==========================================
 local DEFAULT_NPC_ESP_ON = true     -- Ubah ke false jika tidak mau otomatis nyala
-local DEFAULT_PLAYER_ESP_ON = true  -- Ubah ke false jika tidak mau otomatis nyala
+local DEFAULT_PLAYER_ESP_ON = false  -- Ubah ke false jika tidak mau otomatis nyala
 
 -- ==========================================
 -- ANTI DOUBLE EXECUTE & CLEANUP
