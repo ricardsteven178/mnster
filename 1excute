@@ -57,7 +57,7 @@ local scriptsByPlaceId = {
         --"https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/casirV4_landasanbaru",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/casirV6",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/auto_minum_kopi_V5",
-        "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/toolsV2",
+        "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/toolsV3",
         --"https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/espallv3",
         "https://cdn.jsdelivr.net/gh/ricardsteven178/mnster@main/0"--print
     },
