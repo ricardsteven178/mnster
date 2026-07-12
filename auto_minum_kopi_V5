@@ -16,7 +16,7 @@ local Config = {
 	TargetSanityUI = "amount",
 	ServerSyncDelay = 2.5,     
 	MaxTegukPerKopi = 3,       
-	ShowConsoleLogs = true,
+	ShowConsoleLogs = false,
 	
 	-- 🆕 PENGATURAN DEFAULT STATE SAAT PERTAMA KALI EXECUTE:
 	AutoStartSystem = true,    -- true: Auto-farm langsung jalan | false: Sistem mati (butuh klik ON)
