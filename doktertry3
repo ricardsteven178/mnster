@@ -1,4 +1,4 @@
--- ==========================================
+-- ========================================== LANDASAN
 -- ANTI DOUBLE EXECUTE & CLEANUP (SAFE MODE)
 -- ==========================================
 pcall(function() if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end end)
