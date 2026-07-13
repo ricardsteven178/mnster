@@ -1,6 +1,6 @@
 -- ==========================================
 -- AUTO DOCTOR v115 - GRACE PERIOD GUARD
--- Medical Room 1-5 + Emergency Room 6, 7, 8
+-- Medical Room 1-5 + Emergency Room 6, 7, 8 rusak
 -- Fast-Fetch Pipeline + Grace Period Guard
 -- ==========================================
 pcall(function() if _G.AutoDoctor_Main then _G.AutoDoctor_Main:Destroy() end end)
