@@ -1,0 +1,106 @@
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local player = Players.LocalPlayer
+
+-- Mengambil target UI (mengacu pada log sebelumnya, Frame adalah kontainer utamanya)
+local playerGui = player:WaitForChild("PlayerGui")
+local roundStats = playerGui:WaitForChild("RoundStatsDetailed")
+local targetFrame = roundStats:WaitForChild("Frame")
+
+-- 1. Membuat ScreenGui Utama
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "ForceUIGui"
+screenGui.ResetOnSpawn = false
+
+-- Mengamankan GUI ke CoreGui jika menggunakan executor, atau ke PlayerGui jika di Studio
+local success = pcall(function()
+	screenGui.Parent = CoreGui
+end)
+if not success then
+	screenGui.Parent = playerGui
+end
+
+-- 2. Membuat Tombol Toggle
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Size = UDim2.new(0, 180, 0, 40)
+toggleBtn.Position = UDim2.new(0, 20, 0, 20) -- Posisi tombol di pojok kiri atas
+toggleBtn.BackgroundColor3 = Color3.fromRGB(255, 85, 85) -- Merah (OFF)
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 14
+toggleBtn.Text = "Tampilkan UI: OFF"
+toggleBtn.Parent = screenGui
+
+-- Membuat tombol sedikit lebih rapi dengan lengkungan
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = toggleBtn
+
+-- 3. Variabel Status & Penyimpanan Data Default Game
+local isForcedOpen = false
+local defaultAnchor = nil
+local defaultPosition = nil
+local defaultVisible = nil
+
+-- 4. Logika Toggle ON/OFF
+toggleBtn.MouseButton1Click:Connect(function()
+	isForcedOpen = not isForcedOpen
+	
+	if isForcedOpen then
+		-- [STATUS ON] - Simpan settingan bawaan game DULU sebelum diubah
+		defaultAnchor = targetFrame.AnchorPoint
+		defaultPosition = targetFrame.Position
+		defaultVisible = targetFrame.Visible
+		
+		-- Tarik paksa UI ke tengah layar dan buat terlihat
+		targetFrame.Visible = true
+		targetFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+		targetFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+		
+		-- Ubah visual tombol jadi ON (Hijau)
+		toggleBtn.Text = "Tampilkan UI: ON"
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(85, 255, 85)
+		toggleBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	else
+		-- [STATUS OFF] - Kembalikan ke settingan bawaan game
+		if defaultAnchor then targetFrame.AnchorPoint = defaultAnchor end
+		if defaultPosition then targetFrame.Position = defaultPosition end
+		if defaultVisible ~= nil then targetFrame.Visible = defaultVisible end
+		
+		-- Ubah visual tombol jadi OFF (Merah)
+		toggleBtn.Text = "Tampilkan UI: OFF"
+		toggleBtn.BackgroundColor3 = Color3.fromRGB(255, 85, 85)
+		toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+end)
+
+-- (Opsional) Fitur agar tombol bisa digeser (Drag) menggunakan mouse
+local UserInputService = game:GetService("UserInputService")
+local dragging, dragInput, dragStart, startPos
+
+toggleBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = toggleBtn.Position
+	end
+end)
+
+toggleBtn.InputEnded:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = false
+	end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		dragInput = input
+	end
+end)
+
+game:GetService("RunService").RenderStepped:Connect(function()
+	if dragging and dragInput then
+		local delta = dragInput.Position - dragStart
+		toggleBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
