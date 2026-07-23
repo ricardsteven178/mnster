@@ -54,7 +54,7 @@ local Config = {
     -- ==========================================
     AnomalyKiller       = true,     -- true = inject racun ke NPC anomali (Skinwalker dll)
     ShowRadar           = true,     -- true = tampilkan lingkaran radar di workspace
-    ShowConsoleLogs     = true,     -- true = print log detail di console (F9)
+    ShowConsoleLogs     = false,     -- true = print log detail di console (F9)
 
     -- ==========================================
     -- ROOM SETTINGS
