@@ -1,0 +1,565 @@
+-- ==========================================
+-- SMART DEBUGGER v1 — by Axiom
+-- ==========================================
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local LocalPlayer = Players.LocalPlayer
+
+-- ==========================================
+-- ANTI GHOST
+-- ==========================================
+if _G.AxiomDebugger_Main then _G.AxiomDebugger_Main:Destroy() end
+local ExecutionID = tick()
+_G.AxiomDebugger_ExecutionID = ExecutionID
+
+-- ==========================================
+-- CONFIG
+-- ==========================================
+local MAX_LOGS = 80
+local COOLDOWN_RE = 0.3
+local COOLDOWN_PP = 2.0
+
+-- ── CATEGORY TOGGLES ─────────────────────────────────────
+local LOG_ENABLED = {
+	RE  = true,   -- Remote Events
+	PP  = true,   -- Proximity Prompts
+	SYS = true,   -- System logs
+}
+
+-- ── RE BLACKLIST (nama RE yang di-skip) ──────────────────
+local RE_BLACKLIST = {
+	["RE/DisplayBubble"] = true,
+}
+
+-- ── PP BLACKLIST (path PP yang di-skip) ──────────────────
+local PP_BLACKLIST = {
+	["Rooms.Emergency.Room6.Minigame.Monitor.PP2"] = true,
+}
+
+-- ==========================================
+-- STATE
+-- ==========================================
+local logs = {}
+local reCooldowns = {}
+local ppCooldowns = {}
+local isPaused = false
+local filterText = ""
+
+-- ==========================================
+-- GUI
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AxiomDebuggerGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = CoreGui
+_G.AxiomDebugger_Main = ScreenGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 520, 0, 380)
+MainFrame.Position = UDim2.new(0, 10, 0.5, -190)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+-- Title Bar
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+Instance.new("UICorner", TitleBar).CornerRadius = UDim.new(0, 8)
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -100, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "⚙️ Axiom Debugger v1"
+TitleText.TextColor3 = Color3.fromRGB(0, 200, 255)
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 13
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+-- Pause Button
+local PauseBtn = Instance.new("TextButton")
+PauseBtn.Size = UDim2.new(0, 60, 0, 22)
+PauseBtn.Position = UDim2.new(1, -130, 0, 4)
+PauseBtn.BackgroundColor3 = Color3.fromRGB(200, 150, 0)
+PauseBtn.Text = "⏸ PAUSE"
+PauseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+PauseBtn.Font = Enum.Font.GothamBold
+PauseBtn.TextSize = 10
+PauseBtn.Parent = TitleBar
+Instance.new("UICorner", PauseBtn).CornerRadius = UDim.new(0, 4)
+
+-- Clear Button
+local ClearBtn = Instance.new("TextButton")
+ClearBtn.Size = UDim2.new(0, 50, 0, 22)
+ClearBtn.Position = UDim2.new(1, -68, 0, 4)
+ClearBtn.BackgroundColor3 = Color3.fromRGB(150, 50, 50)
+ClearBtn.Text = "🗑 CLEAR"
+ClearBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ClearBtn.Font = Enum.Font.GothamBold
+ClearBtn.TextSize = 10
+ClearBtn.Parent = TitleBar
+Instance.new("UICorner", ClearBtn).CornerRadius = UDim.new(0, 4)
+
+-- Copy Button
+local CopyBtn = Instance.new("TextButton")
+CopyBtn.Size = UDim2.new(0, 50, 0, 22)
+CopyBtn.Position = UDim2.new(1, -190, 0, 4)
+CopyBtn.BackgroundColor3 = Color3.fromRGB(50, 100, 200)
+CopyBtn.Text = "📋 COPY"
+CopyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+CopyBtn.Font = Enum.Font.GothamBold
+CopyBtn.TextSize = 10
+CopyBtn.Parent = TitleBar
+Instance.new("UICorner", CopyBtn).CornerRadius = UDim.new(0, 4)
+
+-- Close Button
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 70, 70)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 14
+CloseBtn.Parent = TitleBar
+
+-- Filter Bar
+local FilterBar = Instance.new("Frame")
+FilterBar.Size = UDim2.new(1, 0, 0, 28)
+FilterBar.Position = UDim2.new(0, 0, 0, 30)
+FilterBar.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+FilterBar.BorderSizePixel = 0
+FilterBar.Parent = MainFrame
+
+local FilterLabel = Instance.new("TextLabel")
+FilterLabel.Size = UDim2.new(0, 50, 1, 0)
+FilterLabel.Position = UDim2.new(0, 8, 0, 0)
+FilterLabel.BackgroundTransparency = 1
+FilterLabel.Text = "FILTER:"
+FilterLabel.TextColor3 = Color3.fromRGB(150, 150, 150)
+FilterLabel.Font = Enum.Font.GothamBold
+FilterLabel.TextSize = 11
+FilterLabel.Parent = FilterBar
+
+local FilterInput = Instance.new("TextBox")
+FilterInput.Size = UDim2.new(1, -70, 0, 20)
+FilterInput.Position = UDim2.new(0, 60, 0, 4)
+FilterInput.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+FilterInput.BorderSizePixel = 0
+FilterInput.Text = ""
+FilterInput.PlaceholderText = "ketik nama RE / PP untuk filter..."
+FilterInput.PlaceholderColor3 = Color3.fromRGB(80, 80, 80)
+FilterInput.TextColor3 = Color3.fromRGB(220, 220, 220)
+FilterInput.Font = Enum.Font.Gotham
+FilterInput.TextSize = 11
+FilterInput.TextXAlignment = Enum.TextXAlignment.Left
+FilterInput.ClearTextOnFocus = false
+FilterInput.Parent = FilterBar
+Instance.new("UICorner", FilterInput).CornerRadius = UDim.new(0, 4)
+local FilterPad = Instance.new("UIPadding", FilterInput)
+FilterPad.PaddingLeft = UDim.new(0, 6)
+
+-- Log Area
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(1, -10, 1, -70)
+ScrollFrame.Position = UDim2.new(0, 5, 0, 62)
+ScrollFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+ScrollFrame.BorderSizePixel = 0
+ScrollFrame.ScrollBarThickness = 4
+ScrollFrame.ScrollBarImageColor3 = Color3.fromRGB(0, 200, 255)
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+ScrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+ScrollFrame.Parent = MainFrame
+Instance.new("UICorner", ScrollFrame).CornerRadius = UDim.new(0, 6)
+
+local ListLayout = Instance.new("UIListLayout", ScrollFrame)
+ListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+ListLayout.Padding = UDim.new(0, 1)
+
+-- Status Bar
+local StatusBar = Instance.new("TextLabel")
+StatusBar.Size = UDim2.new(1, -10, 0, 16)
+StatusBar.Position = UDim2.new(0, 5, 1, -18)
+StatusBar.BackgroundTransparency = 1
+StatusBar.Text = "logs: 0 | status: LIVE"
+StatusBar.TextColor3 = Color3.fromRGB(80, 80, 80)
+StatusBar.Font = Enum.Font.Gotham
+StatusBar.TextSize = 10
+StatusBar.TextXAlignment = Enum.TextXAlignment.Left
+StatusBar.Parent = MainFrame
+
+-- ==========================================
+-- LOG SYSTEM
+-- ==========================================
+local logCount = 0
+
+local function getTimestamp()
+	local t = os.date("*t")
+	return string.format("[%02d:%02d:%02d]", t.hour, t.min, t.sec)
+end
+
+local function getColor(category)
+	if category == "RE" then return Color3.fromRGB(0, 200, 255)
+	elseif category == "PP" then return Color3.fromRGB(255, 200, 0)
+	elseif category == "SYS" then return Color3.fromRGB(100, 255, 100)
+	else return Color3.fromRGB(200, 200, 200) end
+end
+
+local function addLog(category, message)
+	if isPaused then return end
+	if not LOG_ENABLED[category] then return end
+	if filterText ~= "" and not string.find(string.lower(message), string.lower(filterText)) then return end
+
+	logCount += 1
+	local entry = string.format("%d - %s [%s] %s", logCount, getTimestamp(), category, message)
+
+	table.insert(logs, entry)
+
+	if #logs > MAX_LOGS then
+		table.remove(logs, 1)
+		local children = ScrollFrame:GetChildren()
+		for _, c in ipairs(children) do
+			if c:IsA("TextLabel") then
+				c:Destroy()
+				break
+			end
+		end
+	end
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -8, 0, 16)
+	label.BackgroundTransparency = 1
+	label.Text = entry
+	label.TextColor3 = getColor(category)
+	label.Font = Enum.Font.Code
+	label.TextSize = 10
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextTruncate = Enum.TextTruncate.AtEnd
+	label.LayoutOrder = logCount
+	label.Parent = ScrollFrame
+	local pad = Instance.new("UIPadding", label)
+	pad.PaddingLeft = UDim.new(0, 4)
+
+	task.defer(function()
+		ScrollFrame.CanvasPosition = Vector2.new(0, math.huge)
+	end)
+
+	StatusBar.Text = "logs: " .. logCount .. " | status: " .. (isPaused and "⏸ PAUSED" or "🔴 LIVE")
+end
+
+-- ==========================================
+-- REMOTE EVENT HOOKING
+-- ==========================================
+local function hookRemotes(folder)
+	if not folder then return end
+	for _, re in ipairs(folder:GetChildren()) do
+		if re:IsA("RemoteEvent") and string.match(re.Name, "^RE/") then
+			local reName = re.Name
+			re.OnClientEvent:Connect(function(...)
+				local now = tick()
+				local key = reName
+				if RE_BLACKLIST[reName] then return end
+				if reCooldowns[key] and now < reCooldowns[key] then return end
+				reCooldowns[key] = now + COOLDOWN_RE
+
+				local args = {...}
+				local parts = {}
+				for _, v in ipairs(args) do
+					local t = typeof(v)
+					if t == "Instance" then
+						table.insert(parts, "[Instance] " .. v.Name)
+					elseif t == "Vector3" then
+						table.insert(parts, string.format("[Vector3] %.1f, %.1f, %.1f", v.X, v.Y, v.Z))
+					elseif t == "string" then
+						table.insert(parts, "[string] " .. v)
+					elseif t == "number" then
+						table.insert(parts, "[number] " .. tostring(v))
+					elseif t == "boolean" then
+						table.insert(parts, "[boolean] " .. tostring(v))
+					else
+						table.insert(parts, "[" .. t .. "]")
+					end
+				end
+
+				local msg = reName .. " | " .. table.concat(parts, " | ")
+				addLog("RE", msg)
+			end)
+		end
+	end
+end
+
+-- [FIX] Path RE yang bener
+local rs = game:GetService("ReplicatedStorage")
+task.spawn(function()
+	local net = rs:WaitForChild("Util", 10) and rs.Util:WaitForChild("Net", 10)
+	if net then
+		hookRemotes(net)
+		addLog("SYS", "RE hooks loaded dari Util.Net")
+	else
+		addLog("SYS", "⚠️ Util.Net tidak ditemukan")
+	end
+end)
+
+-- ==========================================
+-- PROXIMITY PROMPT HOOKING
+-- ==========================================
+local function hookPP(pp)
+	if not pp:IsA("ProximityPrompt") then return end
+	pp.Triggered:Connect(function()
+		local now = tick()
+		local key = tostring(pp)
+		if ppCooldowns[key] and now < ppCooldowns[key] then return end
+		ppCooldowns[key] = now + COOLDOWN_PP
+
+		local cur = pp.Parent
+		local parts = {}
+		while cur and cur ~= workspace do
+			table.insert(parts, 1, cur.Name)
+			cur = cur.Parent
+		end
+		local path = table.concat(parts, ".") .. "." .. pp.Name
+
+		-- Skip blacklisted paths
+		if PP_BLACKLIST[path] then return end
+
+		local msg = string.format("Action='%s' | Path='%s'", pp.ActionText or "?", path)
+		addLog("PP", msg)
+	end)
+end
+
+for _, desc in ipairs(workspace:GetDescendants()) do
+	pcall(hookPP, desc)
+end
+workspace.DescendantAdded:Connect(function(desc)
+	pcall(hookPP, desc)
+end)
+
+addLog("SYS", "Axiom Debugger v1 ONLINE — RE + PP tracking active")
+
+-- ==========================================
+-- GUI BUTTONS
+-- ==========================================
+PauseBtn.MouseButton1Click:Connect(function()
+	isPaused = not isPaused
+	PauseBtn.Text = isPaused and "▶ RESUME" or "⏸ PAUSE"
+	PauseBtn.BackgroundColor3 = isPaused and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(200, 150, 0)
+	StatusBar.Text = "logs: " .. logCount .. " | status: " .. (isPaused and "⏸ PAUSED" or "🔴 LIVE")
+end)
+
+ClearBtn.MouseButton1Click:Connect(function()
+	logs = {}
+	logCount = 0
+	for _, c in ipairs(ScrollFrame:GetChildren()) do
+		if c:IsA("TextLabel") then c:Destroy() end
+	end
+	StatusBar.Text = "logs: 0 | status: " .. (isPaused and "⏸ PAUSED" or "🔴 LIVE")
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+	_G.AxiomDebugger_ExecutionID = nil
+	ScreenGui:Destroy()
+end)
+
+CopyBtn.MouseButton1Click:Connect(function()
+	local allLogs = table.concat(logs, "\n")
+	setclipboard(allLogs)
+	CopyBtn.Text = "✅ COPIED"
+	task.delay(1.5, function()
+		CopyBtn.Text = "📋 COPY"
+	end)
+end)
+
+FilterInput:GetPropertyChangedSignal("Text"):Connect(function()
+	filterText = FilterInput.Text
+end)
+
+-- ==========================================
+-- NPC / TASK VALUE WATCHER
+-- ==========================================
+local watchedInstances = {}
+
+local function watchValues(root, label)
+	for _, obj in ipairs(root:GetDescendants()) do
+		if obj:IsA("ValueBase") and not watchedInstances[obj] then
+			watchedInstances[obj] = true
+			obj:GetPropertyChangedSignal("Value"):Connect(function()
+				if _G.AxiomDebugger_ExecutionID ~= ExecutionID then return end
+				addLog("SYS", string.format("ValueChange | %s.%s = '%s'", label, obj:GetFullName():gsub(tostring(root) .. ".", ""), tostring(obj.Value)))
+			end)
+		end
+	end
+	root.DescendantAdded:Connect(function(obj)
+		if obj:IsA("ValueBase") and not watchedInstances[obj] then
+			watchedInstances[obj] = true
+			obj:GetPropertyChangedSignal("Value"):Connect(function()
+				if _G.AxiomDebugger_ExecutionID ~= ExecutionID then return end
+				addLog("SYS", string.format("ValueChange | %s.%s = '%s'", label, obj:GetFullName():gsub(tostring(root) .. ".", ""), tostring(obj.Value)))
+			end)
+		end
+	end)
+end
+
+-- Scan semua player data (skip PlayerGui — terlalu noisy)
+local function watchValues_Player(plr)
+	local targets = {"leaderstats", "Data", "PlayerData", "Stats"}
+	for _, folderName in ipairs(targets) do
+		local folder = plr:FindFirstChild(folderName)
+		if folder then watchValues(folder, "Player:" .. plr.Name) end
+	end
+	plr.ChildAdded:Connect(function(child)
+		for _, folderName in ipairs(targets) do
+			if child.Name == folderName then
+				watchValues(child, "Player:" .. plr.Name)
+			end
+		end
+	end)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	watchValues_Player(plr)
+end
+Players.PlayerAdded:Connect(function(plr)
+	watchValues_Player(plr)
+end)
+
+-- Scan workspace descendants (NPC, folder task, dll)
+watchValues(workspace, "Workspace")
+
+-- Scan ReplicatedStorage (kadang task state disimpen sini)
+watchValues(rs, "ReplicatedStorage")
+
+addLog("SYS", "Task/Value watcher ONLINE — scanning Players + Workspace + RS")
+
+-- ==========================================
+-- CHECKSTEP HIGHLIGHT WATCHER v6
+-- ==========================================
+local function addHighlightLog(msg)
+	if isPaused then return end
+	if not LOG_ENABLED["SYS"] then return end
+	if filterText ~= "" and not string.find(string.lower(msg), string.lower(filterText)) then return end
+
+	logCount += 1
+	local entry = string.format("%d - %s [HL] %s", logCount, getTimestamp(), msg)
+	table.insert(logs, entry)
+
+	if #logs > MAX_LOGS then
+		table.remove(logs, 1)
+		for _, c in ipairs(ScrollFrame:GetChildren()) do
+			if c:IsA("TextLabel") then c:Destroy() break end
+		end
+	end
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, -8, 0, 16)
+	label.BackgroundTransparency = 1
+	label.Text = entry
+	label.TextColor3 = Color3.fromRGB(180, 100, 255)
+	label.Font = Enum.Font.Code
+	label.TextSize = 10
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextTruncate = Enum.TextTruncate.AtEnd
+	label.LayoutOrder = logCount
+	label.Parent = ScrollFrame
+	local pad = Instance.new("UIPadding", label)
+	pad.PaddingLeft = UDim.new(0, 4)
+
+	task.defer(function()
+		ScrollFrame.CanvasPosition = Vector2.new(0, math.huge)
+	end)
+
+	StatusBar.Text = "logs: " .. logCount .. " | status: " .. (isPaused and "⏸ PAUSED" or "🔴 LIVE")
+end
+
+local stepStates = {}
+
+local STEP_PARENT_NAMES = {
+	"Form",
+	"Camera", 
+	"Computer",
+	"Printer",
+	"PrintedBadge",
+}
+
+task.spawn(function()
+	-- Tunggu Misc dulu
+	local misc = workspace:WaitForChild("Misc", 10)
+	if not misc then
+		addLog("SYS", "⚠️ Misc tidak ditemukan")
+		return
+	end
+
+	local checkIn = misc:WaitForChild("CheckIn", 10)
+	if not checkIn then
+		addLog("SYS", "⚠️ CheckIn tidak ditemukan")
+		return
+	end
+
+	addLog("SYS", "CheckStep watcher v6 ONLINE — polling CheckIn + NPCs")
+
+	while _G.AxiomDebugger_ExecutionID == ExecutionID do
+		task.wait(0.05)
+
+		-- Poll step 1-5 langsung dari CheckIn
+		for _, name in ipairs(STEP_PARENT_NAMES) do
+			local ok, parent = pcall(function()
+				return checkIn:FindFirstChild(name)
+			end)
+			if ok and parent then
+				local ok2, hl = pcall(function()
+					return parent:FindFirstChild("CheckStepHighlight", true)
+				end)
+				if not ok2 then hl = nil end
+
+				local label = "Step_" .. name
+				local prev = stepStates[label]
+				local curr = (hl ~= nil)
+
+				if curr ~= prev then
+					stepStates[label] = curr
+					if curr then
+						addHighlightLog(string.format("STEP ACTIVE | %s | %s", label, hl:GetFullName()))
+					else
+						addHighlightLog(string.format("STEP DONE | %s", label))
+					end
+				end
+			end
+		end
+
+		-- Poll step 6 — NPC folder
+		local ok3, npcs = pcall(function()
+			return workspace:FindFirstChild("NPCs")
+		end)
+		if ok3 and npcs then
+			for _, npc in ipairs(npcs:GetChildren()) do
+				if npc:IsA("Model") then
+					local npcLabel = "Step6_" .. npc.Name
+					local ok4, hl = pcall(function()
+						return npc:FindFirstChild("CheckStepHighlight", true)
+					end)
+					if not ok4 then hl = nil end
+
+					local prev = stepStates[npcLabel]
+					local curr = (hl ~= nil)
+
+					if curr ~= prev then
+						stepStates[npcLabel] = curr
+						if curr then
+							addHighlightLog(string.format("STEP ACTIVE | %s | %s", npcLabel, hl:GetFullName()))
+						else
+							addHighlightLog(string.format("STEP DONE | %s", npcLabel))
+						end
+					end
+				end
+			end
+		end
+	end
+end)
