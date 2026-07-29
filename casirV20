@@ -1,0 +1,1072 @@
+-- ==========================================
+-- SMART CASHIER v33 — Step-Aware Edition work paling gacor
+-- Upgrade dari v32: buta prompt → step-aware via CheckStepHighlight polling
+-- CheckStepHighlight bersifat dinamis (spawn/destroy per step), wajib poll fresh
+-- ==========================================
+
+local Config = {
+
+	-- ── GENERAL ───────────────────────────────────────────────────────────────
+	ShowConsoleLogs      = true,   -- true = print log ke console
+	TeleportSebelumMelayani = true, -- true = auto teleport sebelum fire prompt
+
+	-- ── GUI STARTUP ───────────────────────────────────────────────────────────
+	AutoStartEnabled     = true,    -- true = bot langsung aktif saat inject
+	StartMinimized       = false,   -- true = GUI langsung minimized
+
+	-- ── RADAR VISUAL ──────────────────────────────────────────────────────────
+	ShowRadar            = true,    -- true = tampilkan radar visual di workspace
+
+	-- Radar 1 — CheckIn counter kiri (NPC antrian 1)
+	RadarRadius1         = 2,
+	CenterPointRadar1    = CFrame.new(-103.694405, 3.40753078, -7.37222147,
+		-0.996679842, -6.29637782e-08, 0.0814206079,
+		-5.51647794e-08, 1, 9.80360895e-08,
+		-0.0814206079, 9.32190432e-08, -0.996679842),
+
+	-- Radar 2 — CheckIn counter kanan (NPC antrian 2)
+	RadarRadius2         = 2,
+	CenterPointRadar2    = CFrame.new(-92.7323074, 3.40753174, 8.35838032,
+		-0.0132459002, 7.8336619e-08, 0.999912262,
+		-8.0306819e-09, 1, -7.84498724e-08,
+		-0.999912262, -9.06911612e-09, -0.0132459002),
+
+	-- Radar 3 — Area kasir utama (deteksi prompt aktif di zona kasir)
+	RadarRadius3         = 15,
+	CenterPointRadar3    = CFrame.new(-102.853859, 3.41253114, 2.83109426,
+		0.660403967, -5.88231437e-08, -0.750910521,
+		1.04164357e-07, 1, 1.32737652e-08,
+		0.750910521, -8.69841585e-08, 0.660403967),
+
+	-- Radar 4 — Zona deteksi "Ask to Leave" (NPC yang harus diusir)
+	RadarRadius4         = 2,
+	CenterPointRadar4    = CFrame.new(-92.7714539, 3.40753102, 2.55851841,
+		-0.0232205726, 3.82434084e-09, 0.999730349,
+		-4.15399315e-09, 1, -3.92185617e-09,
+		-0.999730349, -4.24394075e-09, -0.0232205726),
+
+	-- ── TELEPORT TARGETS ──────────────────────────────────────────────────────
+	-- Posisi berdiri kasir saat melayani NPC
+	CashierCFrame        = CFrame.new(-102.853859, 3.41253114, 2.83109426,
+		0.660403967, -5.88231437e-08, -0.750910521,
+		1.04164357e-07, 1, 1.32737652e-08,
+		0.750910521, -8.69841585e-08, 0.660403967),
+
+	-- Posisi tombol shutter (buka/tutup gerbang)
+	ShutterCFrame        = CFrame.new(-113.169373, 3.41253114, -2.92784166,
+		0.999987602, 3.36771606e-08, 0.00498215528,
+		-3.40864617e-08, 1, 8.20680768e-08,
+		-0.00498215528, -8.22368875e-08, 0.999987602),
+
+	-- ── THRESHOLD ─────────────────────────────────────────────────────────────
+	ForceTeleportThreshold = 6,   -- jarak max sebelum teleport paksa ke kasir
+	RecoveryThreshold      = 8,   -- jarak max sebelum trigger recovery teleport
+
+	-- ── STEP POLLING ──────────────────────────────────────────────────────────
+	StepPollRate         = 0.05,  -- interval polling CheckStepHighlight (detik)
+	StepWaitTimeout      = 8.0,   -- max tunggu step berikutnya sebelum fallback
+
+	-- ── STALKER ───────────────────────────────────────────────────────────────
+	StalkerTimeout       = 30.0,  -- max waktu retry fire StrangePaper sebelum give up (detik)
+	StalkerClickDelay    = 1.5,   -- delay sebelum klik tutup paper (detik)
+}
+
+local function logInfo(msg)
+	if Config.ShowConsoleLogs then print("[SmartCashier v33] " .. msg) end
+end
+
+-- ==========================================
+-- ANTI GHOST-LOOP — bunuh instance lama
+-- ==========================================
+local ExecutionID = tick()
+_G.SmartCashier_ExecutionID = ExecutionID
+
+if _G.SmartCashier_Main then _G.SmartCashier_Main:Destroy() end
+if _G.SmartCashier_Radars then
+	for _, r in pairs(_G.SmartCashier_Radars) do
+		if r then r:Destroy() end
+	end
+end
+_G.SmartCashier_Radars = {}
+
+-- ==========================================
+-- SERVICES
+-- ==========================================
+local Players    = game:GetService("Players")
+local CoreGui    = game:GetService("CoreGui")
+local RunService = game:GetService("RunService")
+local workspace  = game:GetService("Workspace")
+
+local LocalPlayer      = Players.LocalPlayer
+local autoCashierEnabled = Config.AutoStartEnabled
+local isRadarVisible     = Config.ShowRadar
+local actionCooldowns    = {}
+
+-- ==========================================
+-- YAPPING DETECTION — NPC sedang bicara/cutscene
+-- ==========================================
+local isNPCYapping = false
+
+task.spawn(function()
+	local rs  = game:GetService("ReplicatedStorage")
+	local net = rs:WaitForChild("Util", 10) and rs.Util:WaitForChild("Net", 10)
+	if not net then return end
+
+	local displayBubble = net:WaitForChild("RE/DisplayBubble", 10)
+	local playCutscene  = net:WaitForChild("RE/PlayCutscene", 10)
+
+	local yappingTimer = nil
+	if displayBubble then
+		displayBubble.OnClientEvent:Connect(function()
+			isNPCYapping = true
+			if yappingTimer then task.cancel(yappingTimer) end
+			yappingTimer = task.delay(4.0, function()
+				isNPCYapping = false
+				yappingTimer = nil
+			end)
+		end)
+	end
+
+	if playCutscene then
+		playCutscene.OnClientEvent:Connect(function(cutsceneType)
+			if cutsceneType == "VisitorCheckedIn" then
+				-- NPC selesai check-in, yapping selesai
+				isNPCYapping = false
+			else
+				isNPCYapping = true
+				task.delay(6.0, function() isNPCYapping = false end)
+			end
+		end)
+	end
+end)
+
+-- ==========================================
+-- GUI PARENT
+-- ==========================================
+local guiParent = (RunService:IsStudio() and LocalPlayer:WaitForChild("PlayerGui"))
+	or pcall(function() return CoreGui.RobloxGui end) and CoreGui
+	or LocalPlayer:WaitForChild("PlayerGui")
+
+-- ==========================================
+-- GUI BUILD
+-- ==========================================
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "SmartCashierGui"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = guiParent
+_G.SmartCashier_Main = ScreenGui
+
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 250, 0, 245)
+MainFrame.Position = UDim2.new(1, -265, 0.5, -122)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
+
+local TitleBar = Instance.new("Frame")
+TitleBar.Size = UDim2.new(1, 0, 0, 30)
+TitleBar.BackgroundColor3 = Color3.fromRGB(45, 45, 45)
+TitleBar.BorderSizePixel = 0
+TitleBar.Parent = MainFrame
+
+local TitleText = Instance.new("TextLabel")
+TitleText.Size = UDim2.new(1, -60, 1, 0)
+TitleText.Position = UDim2.new(0, 10, 0, 0)
+TitleText.BackgroundTransparency = 1
+TitleText.Text = "Smart Cashier v33"
+TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+TitleText.Font = Enum.Font.GothamBold
+TitleText.TextSize = 14
+TitleText.TextXAlignment = Enum.TextXAlignment.Left
+TitleText.Parent = TitleBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.new(0, 30, 0, 30)
+MinimizeBtn.Position = UDim2.new(1, -60, 0, 0)
+MinimizeBtn.BackgroundTransparency = 1
+MinimizeBtn.Text = "—"
+MinimizeBtn.TextColor3 = Color3.fromRGB(200, 200, 200)
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.TextSize = 16
+MinimizeBtn.Parent = TitleBar
+
+local CloseBtn = Instance.new("TextButton")
+CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+CloseBtn.Position = UDim2.new(1, -30, 0, 0)
+CloseBtn.BackgroundTransparency = 1
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Color3.fromRGB(255, 70, 70)
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.TextSize = 16
+CloseBtn.Parent = TitleBar
+
+local isMinimized = false
+
+local ContentFrame = Instance.new("Frame")
+ContentFrame.Size = UDim2.new(1, 0, 1, -30)
+ContentFrame.Position = UDim2.new(0, 0, 0, 30)
+ContentFrame.BackgroundTransparency = 1
+ContentFrame.Parent = MainFrame
+
+local ToggleBtn = Instance.new("TextButton")
+ToggleBtn.Size = UDim2.new(0, 210, 0, 35)
+ToggleBtn.Position = UDim2.new(0.5, -105, 0, 10)
+ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+ToggleBtn.Text = "TRUE AI: OFF"
+ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+ToggleBtn.Font = Enum.Font.GothamBold
+ToggleBtn.TextSize = 13
+ToggleBtn.Parent = ContentFrame
+Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(0, 6)
+
+local RadarBtn = Instance.new("TextButton")
+RadarBtn.Size = UDim2.new(0, 210, 0, 35)
+RadarBtn.Position = UDim2.new(0.5, -105, 0, 50)
+RadarBtn.Text = isRadarVisible and "SHOW RADAR: ON" or "SHOW RADAR: OFF"
+RadarBtn.BackgroundColor3 = isRadarVisible and Color3.fromRGB(70, 200, 70) or Color3.fromRGB(70, 70, 70)
+RadarBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+RadarBtn.Font = Enum.Font.GothamBold
+RadarBtn.TextSize = 13
+RadarBtn.Parent = ContentFrame
+Instance.new("UICorner", RadarBtn).CornerRadius = UDim.new(0, 6)
+
+-- Status panel — 4 baris: R1, R2, R4, Step aktif
+local StatusPanel = Instance.new("Frame")
+StatusPanel.Size = UDim2.new(0, 210, 0, 95)
+StatusPanel.Position = UDim2.new(0.5, -105, 0, 95)
+StatusPanel.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+StatusPanel.Parent = ContentFrame
+Instance.new("UICorner", StatusPanel).CornerRadius = UDim.new(0, 6)
+
+local function makeStatusLabel(yPos, defaultText)
+	local lbl = Instance.new("TextLabel")
+	lbl.Size = UDim2.new(1, -10, 0, 18)
+	lbl.Position = UDim2.new(0, 5, 0, yPos)
+	lbl.BackgroundTransparency = 1
+	lbl.RichText = true
+	lbl.Text = defaultText
+	lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+	lbl.Font = Enum.Font.GothamSemibold
+	lbl.TextSize = 11
+	lbl.TextXAlignment = Enum.TextXAlignment.Left
+	lbl.Parent = StatusPanel
+	return lbl
+end
+
+local StatusR1   = makeStatusLabel(5,  "R1 (CheckIn 1): <font color='#aaaaaa'>Kosong</font>")
+local StatusR2   = makeStatusLabel(25, "R2 (CheckIn 2): <font color='#aaaaaa'>Kosong</font>")
+local StatusR4   = makeStatusLabel(45, "R4 (Ask to Leave): <font color='#aaaaaa'>Kosong</font>")
+local StatusStep = makeStatusLabel(68, "Step: <font color='#aaaaaa'>-</font>")
+
+-- ==========================================
+-- HELPER — RADAR VISUAL
+-- ==========================================
+local function updateVisualRadar(id, pos, radius, color, visible)
+	if not visible then
+		if _G.SmartCashier_Radars[id] then
+			_G.SmartCashier_Radars[id]:Destroy()
+			_G.SmartCashier_Radars[id] = nil
+		end
+		return
+	end
+	local radar = _G.SmartCashier_Radars[id]
+	if not radar or not radar.Parent then
+		radar = Instance.new("Part")
+		radar.Name = "Radar_" .. id
+		radar.Shape = Enum.PartType.Cylinder
+		radar.Anchored = true
+		radar.CanCollide = false
+		radar.CanQuery = false
+		radar.CastShadow = false
+		radar.Material = Enum.Material.Neon
+		radar.Transparency = 0.85
+		radar.Color = color
+		radar.Parent = workspace
+		_G.SmartCashier_Radars[id] = radar
+	end
+	radar.Size = Vector3.new(0.1, radius * 2, radius * 2)
+	radar.CFrame = CFrame.new(pos.X, pos.Y - 1.45, pos.Z) * CFrame.Angles(0, 0, math.rad(90))
+end
+
+-- ==========================================
+-- HELPER — POSISI PROMPT
+-- ==========================================
+local function getPromptPosition(prompt)
+	local cur = prompt.Parent
+	while cur do
+		if cur:IsA("BasePart") or cur:IsA("Model") or cur:IsA("Tool") then
+			local ok, pos = pcall(function() return cur:GetPivot().Position end)
+			if ok and pos then return pos end
+		end
+		cur = cur.Parent
+	end
+	return nil
+end
+
+-- ==========================================
+-- HELPER — DETEKSI PROMPT AKTIF DI RADAR 3
+-- ==========================================
+local function hasActivePromptInRadar3()
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ProximityPrompt") and desc.Enabled then
+			local pos = getPromptPosition(desc)
+			if pos and (pos - Config.CenterPointRadar3.Position).Magnitude <= Config.RadarRadius3 then
+				return true
+			end
+		end
+	end
+	return false
+end
+
+-- ==========================================
+-- HELPER — TELEPORT
+-- ==========================================
+local function smartTeleportToCashier(reason)
+	if not Config.TeleportSebelumMelayani then return end
+	if isNPCYapping then
+		logInfo("-> NPC yapping, skip teleport [" .. reason .. "]")
+		return
+	end
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+	if (root.Position - Config.CashierCFrame.Position).Magnitude <= Config.ForceTeleportThreshold then return end
+	if hasActivePromptInRadar3() then
+		logInfo("-> Teleport ke kasir [" .. reason .. "]")
+		root.CFrame = Config.CashierCFrame
+		root.Velocity = Vector3.new(0, 0, 0)
+		task.wait(0.2)
+	end
+end
+
+local function teleportTo(targetCFrame, label)
+	if not Config.TeleportSebelumMelayani then return end
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if root and (root.Position - targetCFrame.Position).Magnitude > 3 then
+		logInfo("Teleport -> " .. label)
+		root.CFrame = targetCFrame
+		root.Velocity = Vector3.new(0, 0, 0)
+		task.wait(0.2)
+	end
+end
+
+local function teleportToPrompt(prompt)
+	if not Config.TeleportSebelumMelayani then return false end
+	local pos = getPromptPosition(prompt)
+	if not pos then return false end
+	local char = LocalPlayer.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
+	if root and (root.Position - pos).Magnitude > 3 then
+		root.CFrame = CFrame.new(pos + Vector3.new(0, 3.5, 0))
+		root.Velocity = Vector3.new(0, 0, 0)
+		task.wait(0.25)
+	end
+	return true
+end
+
+-- ==========================================
+-- HELPER — FIRE PROMPT
+-- ==========================================
+local function firePrompt(prompt)
+	if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+	local oldReq  = prompt.RequiresLineOfSight
+	local oldDist = prompt.MaxActivationDistance
+	local oldHold = prompt.HoldDuration
+
+	prompt.RequiresLineOfSight    = false
+	prompt.MaxActivationDistance  = math.huge
+	prompt.HoldDuration           = 0
+
+	if type(fireproximityprompt) == "function" then
+		fireproximityprompt(prompt, 1, true)
+	else
+		prompt:InputHoldBegan()
+		task.wait(0.05)
+		prompt:InputHoldEnded()
+	end
+
+	prompt.RequiresLineOfSight   = oldReq
+	prompt.MaxActivationDistance = oldDist
+	prompt.HoldDuration          = oldHold
+	return true
+end
+
+local function isReady(prompt)
+	if not prompt or not prompt.Enabled then return false end
+	if actionCooldowns[prompt] and tick() < actionCooldowns[prompt] then return false end
+	return true
+end
+
+local function autoClickScreen()
+	pcall(function()
+		if type(mouse1click) == "function" then
+			mouse1click()
+		else
+			local vim = game:GetService("VirtualInputManager")
+			vim:SendMouseButtonEvent(500, 500, 0, true, game, 1)
+			task.wait(0.05)
+			vim:SendMouseButtonEvent(500, 500, 0, false, game, 1)
+		end
+	end)
+end
+
+-- ==========================================
+-- STEP-AWARE ENGINE
+-- CheckStepHighlight spawn/destroy dinamis — wajib FindFirstChild fresh tiap poll
+-- Jangan cache reference highlight, selalu cari ulang
+-- ==========================================
+
+-- Map nama step → path object di Misc.CheckIn
+-- Step6 (NPC talk) di-handle terpisah via NPCs folder
+local STEP_MAP = {
+	-- ── CheckIn 1 ─────────────────────────────────────────────────────────────
+	{ id = "Form",          path = {"Misc", "CheckIn",  "Form"},         action = "Stamp Forms" },
+	{ id = "Camera",        path = {"Misc", "CheckIn",  "Camera"},       action = "Take Photo"  },
+	{ id = "Computer",      path = {"Misc", "CheckIn",  "Computer"},     action = "Register"    },
+	{ id = "Printer",       path = {"Misc", "CheckIn",  "Printer"},      action = "Print Badge" },
+	{ id = "PrintedBadge",  path = {"Misc", "CheckIn",  "PrintedBadge"}, action = "Take"        },
+
+	-- ── CheckIn 2 (Computer & Printer shared ke CheckIn 1) ───────────────────
+	{ id = "Form2",         path = {"Misc", "CheckIn2", "Form"},         action = "Stamp Forms" },
+	{ id = "Camera2",       path = {"Misc", "CheckIn2", "Camera"},       action = "Take Photo"  },
+	{ id = "Computer2",     path = {"Misc", "CheckIn",  "Computer"},     action = "Register"    }, -- shared
+	{ id = "Printer2",      path = {"Misc", "CheckIn",  "Printer"},      action = "Print Badge" }, -- shared
+	{ id = "PrintedBadge2", path = {"Misc", "CheckIn2", "PrintedBadge"}, action = "Take"        },
+}
+
+-- Resolves path table ke Instance — fresh tiap call (dynamic object)
+local function resolvePath(pathTable)
+	local cur = workspace
+	for _, segment in ipairs(pathTable) do
+		if not cur then return nil end
+		cur = cur:FindFirstChild(segment)
+	end
+	return cur
+end
+
+-- Cek apakah step tertentu aktif via CheckStepHighlight
+-- Harus fresh FindFirstChild — object ini spawn/destroy setiap state change
+local function isStepActive(stepObj)
+	if not stepObj then return false end
+	return stepObj:FindFirstChild("CheckStepHighlight", true) ~= nil
+end
+
+-- Ambil PP dari object step — cari turunan langsung
+local function getStepPP(stepObj)
+	if not stepObj then return nil end
+
+	-- Camera step — cari prompt "Take Photo" di ReplicatedStorage.Misc.Photo.PP
+	if stepObj.Name == "Camera" then
+		local rs = game:GetService("ReplicatedStorage")
+		local photoPP = rs:FindFirstChild("Misc")
+			and rs.Misc:FindFirstChild("Photo")
+			and rs.Misc.Photo:FindFirstChild("PP")
+		if photoPP and photoPP:IsA("ProximityPrompt") and photoPP.Enabled then
+			if isReady(photoPP) then return photoPP end
+		end
+		return nil
+	end
+
+	-- Step lain — cari PP normal di dalam object
+	local pp = stepObj:FindFirstChild("PP")
+	if pp and pp:IsA("ProximityPrompt") and pp.Enabled then return pp end
+	for _, d in ipairs(stepObj:GetDescendants()) do
+		if d:IsA("ProximityPrompt") and d.Enabled then return d end
+	end
+	return nil
+end
+
+-- Tunggu step aktif dengan timeout
+-- Return true kalau step aktif dalam timeout, false kalau timeout
+local function waitForStep(stepObj, timeout)
+	if not stepObj then return false end
+	local deadline = tick() + (timeout or Config.StepWaitTimeout)
+	while tick() < deadline do
+		if _G.SmartCashier_ExecutionID ~= ExecutionID then return false end
+		if isStepActive(stepObj) then return true end
+		task.wait(Config.StepPollRate)
+	end
+	return false
+end
+
+-- Cari step mana yang aktif saat ini dari STEP_MAP
+-- Return: { stepData, stepObj } atau nil kalau gak ada
+local function getActiveCheckInStep()
+	for _, step in ipairs(STEP_MAP) do
+		local obj = resolvePath(step.path)
+		if obj and isStepActive(obj) then
+			return step, obj
+		end
+	end
+	return nil, nil
+end
+
+-- Cari NPC yang Step6-nya aktif (highlight di NPCs folder)
+-- Return: npcName string atau nil
+local function getActiveStep6NPC()
+	local npcsFolder = workspace:FindFirstChild("NPCs")
+	if not npcsFolder then return nil end
+	for _, npc in ipairs(npcsFolder:GetChildren()) do
+		if npc:IsA("Model") and npc.Name:lower() ~= "doctor" then
+			if npc:FindFirstChild("CheckStepHighlight", true) then
+				return npc.Name
+			end
+		end
+	end
+	return nil
+end
+
+-- ==========================================
+-- ANOMALY DETECTION
+-- ==========================================
+local function isAnomaly(npc)
+	local lower = string.lower(npc.Name or "")
+	if lower == "doctor" then return false end
+	if string.find(lower, "monster") or string.find(lower, "ghost") then return true end
+	local attr = npc:GetAttributes()
+	if attr.Skinwalker or attr.SkinwalkerEasy or attr.PenaltyWhenLettingIn
+		or attr.PhotoEffect == "CursedPhoto" or attr.PhotoEffect2 == "CursedPhoto" then
+		return true
+	end
+	return false
+end
+
+local function getClosestCounter(npc)
+	local checkIn1 = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn")
+	local checkIn2 = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn2")
+	local npcPos = npc:GetPivot().Position
+	local d1 = (npcPos - Config.CenterPointRadar1.Position).Magnitude
+	local d2 = (npcPos - Config.CenterPointRadar2.Position).Magnitude
+	if d2 < d1 and checkIn2 then return checkIn2 else return checkIn1 end
+end
+
+local function hasItem(itemName)
+	local char = LocalPlayer.Character
+	local bp = LocalPlayer:FindFirstChild("Backpack")
+	local function checkFolder(folder)
+		if not folder then return false end
+		for _, v in ipairs(folder:GetChildren()) do
+			if v:IsA("Tool") and string.match(string.lower(v.Name), string.lower(itemName)) then
+				return true
+			end
+		end
+		return false
+	end
+	return checkFolder(char) or checkFolder(bp)
+end
+
+local function equipItem(itemName)
+	local char = LocalPlayer.Character
+	local hum = char and char:FindFirstChild("Humanoid")
+	local bp = LocalPlayer:FindFirstChild("Backpack")
+	if not hum or not bp then return end
+	for _, v in ipairs(bp:GetChildren()) do
+		if v:IsA("Tool") and string.match(string.lower(v.Name), string.lower(itemName)) then
+			hum:EquipTool(v)
+			task.wait(0.2)
+			return
+		end
+	end
+end
+
+local function getPlayerMoney()
+	local ok, result = pcall(function()
+		local pg = LocalPlayer:FindFirstChild("PlayerGui")
+		-- Path utama: Sanity.Frame.cash
+		local sanity = pg and pg:FindFirstChild("Sanity")
+		local frame = sanity and sanity:FindFirstChild("Frame")
+		local cash = frame and frame:FindFirstChild("cash")
+		if cash and cash:IsA("TextLabel") then
+			local num = string.match(cash.Text, "%$(%d+)")
+			if num then return tonumber(num) end
+		end
+		-- Fallback: scan seluruh PlayerGui
+		if pg then
+			for _, v in ipairs(pg:GetDescendants()) do
+				if v:IsA("TextLabel") and v.Name == "cash" then
+					local num = string.match(v.Text, "%$(%d+)")
+					if num then return tonumber(num) end
+				end
+			end
+		end
+		return 0
+	end)
+	return ok and result or 0
+end
+
+local function getPromptByActionExact(actionName)
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ProximityPrompt") and desc.Enabled then
+			if string.lower(desc.ActionText or "") == actionName then
+				if isReady(desc) then return desc end
+			end
+		end
+	end
+	return nil
+end
+
+-- ==========================================
+-- SPECIAL EVENT DETECTION
+-- ==========================================
+local specialActions = {
+	"give coffee", "accept suitcase", "give scalpel",
+	"let him hide with you", "accept gift",
+	"ask to leave", "accept helping her"
+}
+
+local function getSpecialPrompt(isStalkerActive, normalNPCCount)
+	-- Stalker path spesifik
+	if isStalkerActive then
+		local strangePaper = workspace:FindFirstChild("Misc")
+			and workspace.Misc:FindFirstChild("StrangePaper")
+			and workspace.Misc.StrangePaper:FindFirstChild("PP")
+		if isReady(strangePaper) then return strangePaper, "inspect (stalker)" end
+
+		local stalkerCamPP = workspace:FindFirstChild("Misc")
+			and workspace.Misc:FindFirstChild("CheckIn")
+			and workspace.Misc.CheckIn:FindFirstChild("Camera")
+			and workspace.Misc.CheckIn.Camera:FindFirstChild("StalkerPP")
+		if isReady(stalkerCamPP) then return stalkerCamPP, "take photo (stalker)" end
+	end
+
+	-- Hazmat NPC di Radar1/Radar2
+	local npcsFolder = workspace:FindFirstChild("NPCs")
+	if npcsFolder then
+		for _, npc in ipairs(npcsFolder:GetChildren()) do
+			if npc:IsA("Model") and string.find(string.lower(npc.Name), "hazmat") and npc.PrimaryPart then
+				local pos = npc:GetPivot().Position
+				local d1 = (pos - Config.CenterPointRadar1.Position).Magnitude
+				local d2 = (pos - Config.CenterPointRadar2.Position).Magnitude
+				if d1 <= Config.RadarRadius1 or d2 <= Config.RadarRadius2 then
+					local hazmatPP = workspace:FindFirstChild("Misc")
+						and workspace.Misc:FindFirstChild("HazmatForm")
+						and workspace.Misc.HazmatForm:FindFirstChild("PP")
+					if isReady(hazmatPP) then return hazmatPP, "hazmat_form" end
+				end
+			end
+		end
+	end
+
+	-- Scan special action prompts di seluruh workspace
+	for _, desc in ipairs(workspace:GetDescendants()) do
+		if desc:IsA("ProximityPrompt") and desc.Enabled then
+			local actText = string.lower(desc.ActionText or "")
+			for _, special in ipairs(specialActions) do
+				if string.match(actText, special) then
+					-- "take photo" hanya di-fire kalau gak ada NPC normal di antrian
+					-- supaya gak konflik dengan step Camera normal di STEP_MAP
+					if special == "take photo" and (normalNPCCount or 0) > 0 then
+						logInfo("-> Skip take photo — ada NPC normal di antrian, handle via STEP_MAP")
+					else
+						if isReady(desc) then return desc, special end
+					end
+				end
+			end
+			local hireCost = string.match(desc.ActionText or "", "Hire.*%$(%d+)")
+			if hireCost then
+				local cost  = tonumber(hireCost)
+				local money = getPlayerMoney()
+				logInfo("💰 HIRE CHECK — cost: " .. tostring(cost) .. " | money: " .. tostring(money))
+				if cost and money >= cost then
+					if isReady(desc) then return desc, "hire_npc:" .. hireCost end
+				else
+					logInfo("💸 Skip hire — kurang duit, treat as anomaly")
+					return desc, "hire_rejected"
+				end
+			end
+		end
+	end
+	return nil, nil
+end
+
+-- ==========================================
+-- MAIN LOOP
+-- ==========================================
+task.spawn(function()
+	logInfo("Smart Cashier v33 AKTIF — Step-Aware Engine Online")
+
+	local _firstTickDone = false
+
+	while task.wait(0.5) do
+		if _G.SmartCashier_ExecutionID ~= ExecutionID then break end
+
+		-- Update radar visual
+		pcall(function()
+			updateVisualRadar("Radar1", Config.CenterPointRadar1.Position, Config.RadarRadius1, Color3.fromRGB(0, 255, 255), isRadarVisible)
+			updateVisualRadar("Radar2", Config.CenterPointRadar2.Position, Config.RadarRadius2, Color3.fromRGB(0, 255, 100), isRadarVisible)
+			updateVisualRadar("Radar3", Config.CenterPointRadar3.Position, Config.RadarRadius3, Color3.fromRGB(255, 255, 0), isRadarVisible)
+			updateVisualRadar("Radar4", Config.CenterPointRadar4.Position, Config.RadarRadius4, Color3.fromRGB(255, 0, 0), isRadarVisible)
+		end)
+
+		local normalNPCs   = {}
+		local anomalyNPCs  = {}
+		local isStalkerActive = false
+
+		-- Scan NPC + update status panel
+		pcall(function()
+			local npcsFolder = workspace:FindFirstChild("NPCs")
+			local r1_status = "<font color='#aaaaaa'>Kosong</font>"
+			local r2_status = "<font color='#aaaaaa'>Kosong</font>"
+			local r4_status = "<font color='#aaaaaa'>Kosong</font>"
+
+			if npcsFolder then
+				for _, npc in ipairs(npcsFolder:GetChildren()) do
+					if npc:IsA("Model") and npc.Name:lower() ~= "doctor" and npc.PrimaryPart then
+					local isStalker = string.match(string.lower(npc.Name), "stalker") ~= nil
+					if isStalker then
+						isStalkerActive = true
+					end
+
+					-- StalkerMonster handle terpisah via isStalkerActive, skip dari radar normal
+					if isStalker then continue end
+
+					local npcPos = npc:GetPivot().Position
+					local dist1  = (npcPos - Config.CenterPointRadar1.Position).Magnitude
+					local dist2  = (npcPos - Config.CenterPointRadar2.Position).Magnitude
+					local dist4  = (npcPos - Config.CenterPointRadar4.Position).Magnitude
+					local isAnom = isAnomaly(npc)
+					local statusText = isAnom
+						and "<font color='#ff4444'>Anomali</font>"
+						or  "<font color='#44ff44'>Normal</font>"
+
+					if dist1 <= Config.RadarRadius1 then
+						r1_status = statusText
+						if isAnom then table.insert(anomalyNPCs, npc) else table.insert(normalNPCs, npc) end
+					end
+					if dist2 <= Config.RadarRadius2 then
+						r2_status = statusText
+						if isAnom then table.insert(anomalyNPCs, npc) else table.insert(normalNPCs, npc) end
+					end
+					if dist4 <= Config.RadarRadius4 then
+						r4_status = "<font color='#ff4444'>Terdeteksi</font>"
+					end
+					end
+				end
+			end
+
+			-- Update status labels
+			StatusR1.Text = "R1 (CheckIn 1): " .. r1_status
+			StatusR2.Text = "R2 (CheckIn 2): " .. r2_status
+			StatusR4.Text = "R4 (Ask to Leave): " .. r4_status
+
+			-- Update step display — poll CheckStepHighlight fresh tiap tick
+			local activeStep, _ = getActiveCheckInStep()
+			local activeNPCStep = getActiveStep6NPC()
+			if activeStep then
+				StatusStep.Text = "Step: <font color='#00ffff'>" .. activeStep.id .. "</font>"
+			elseif activeNPCStep then
+				StatusStep.Text = "Step: <font color='#ffff00'>Talk → " .. activeNPCStep .. "</font>"
+			else
+				StatusStep.Text = "Step: <font color='#aaaaaa'>-</font>"
+			end
+		end)
+
+		if autoCashierEnabled then
+			local ok, err = pcall(function()
+
+				-- ── INIT — Teleport ke kasir saat pertama aktif ──────────────────
+				if not _firstTickDone then
+					_firstTickDone = true
+					local char = LocalPlayer.Character
+					local root = char and char:FindFirstChild("HumanoidRootPart")
+					if root then
+						logInfo("-> INIT: Teleport ke kasir")
+						root.CFrame = Config.CashierCFrame
+						root.Velocity = Vector3.new(0, 0, 0)
+						task.wait(0.3)
+					end
+				end
+
+				-- ── PRIORITAS 0 — Special Event & Stalker ───────────────────────
+				local specialPrompt, specialType = getSpecialPrompt(isStalkerActive, #normalNPCs)
+
+				if specialPrompt then
+					if specialType == "inspect (stalker)" then
+						logInfo("🚨 STALKER: inspect StrangePaper — retry loop aktif")
+						local deadline = tick() + Config.StalkerTimeout
+						local fired = false
+						while tick() < deadline do
+							if _G.SmartCashier_ExecutionID ~= ExecutionID then return end
+							-- cek stalker masih ada
+							local stillStalker = false
+							local npcsFolder = workspace:FindFirstChild("NPCs")
+							if npcsFolder then
+								for _, npc in ipairs(npcsFolder:GetChildren()) do
+									if npc:IsA("Model") and string.match(string.lower(npc.Name), "stalker") then
+										stillStalker = true
+										break
+									end
+								end
+							end
+							if not stillStalker then
+								logInfo("✅ STALKER pergi — selesai")
+								break
+							end
+							-- cari StrangePaper.PP fresh
+							local sp = workspace:FindFirstChild("Misc")
+								and workspace.Misc:FindFirstChild("StrangePaper")
+								and workspace.Misc.StrangePaper:FindFirstChild("PP")
+							if sp and sp.Enabled then
+								logInfo("🚨 STALKER: fire StrangePaper.PP")
+								teleportTo(Config.CashierCFrame, "Kasir (Stalker)")
+								firePrompt(sp)
+								task.wait(Config.StalkerClickDelay)
+								autoClickScreen()
+								task.wait(0.3)
+								autoClickScreen() -- safety net klik kedua
+								fired = true
+							end
+							task.wait(2.0) -- tunggu 2 detik sebelum retry
+						end
+						if not fired then
+							logInfo("⚠️ STALKER timeout — give up")
+						end
+						return
+					end
+
+					if specialType == "take photo (stalker)" then
+						logInfo("🚨 STALKER: take photo")
+						teleportTo(Config.CashierCFrame, "Kasir (Stalker)")
+						firePrompt(specialPrompt)
+						actionCooldowns[specialPrompt] = tick() + 3.0
+						return
+					end
+
+					if specialType == "give coffee" then
+						if not hasItem("coffee") then
+							local pp = getPromptByActionExact("coffee")
+							if pp then
+								teleportToPrompt(pp)
+								firePrompt(pp)
+								actionCooldowns[pp] = tick() + 2.5
+							end
+							return
+						else
+							equipItem("coffee")
+						end
+					elseif specialType == "give scalpel" then
+						if not hasItem("scalpel") then
+							local pp = getPromptByActionExact("scalpel")
+							if pp then
+								teleportToPrompt(pp)
+								firePrompt(pp)
+								actionCooldowns[pp] = tick() + 2.5
+							end
+							return
+						else
+							equipItem("scalpel")
+						end
+					end
+
+				-- HIRE REJECTED — duit kurang, tutup shutter kalau gak ada NPC normal
+				if specialType == "hire_rejected" then
+					if #normalNPCs > 0 then
+						logInfo("💸 HIRE REJECTED — tapi masih ada NPC normal, selesaikan dulu")
+						return
+					end
+					logInfo("💸 HIRE REJECTED — duit kurang, tutup shutter")
+					local shutterPP = workspace:FindFirstChild("Misc")
+						and workspace.Misc:FindFirstChild("ShutterButton")
+						and workspace.Misc.ShutterButton:FindFirstChild("PP")
+					if shutterPP and shutterPP.ActionText == "Close" then
+						teleportTo(Config.ShutterCFrame, "Shutter")
+						firePrompt(shutterPP)
+						actionCooldowns[shutterPP] = tick() + 3.0
+					end
+					return
+				end
+
+					if specialType == "hazmat_form" then
+						logInfo("☢️ HAZMAT: fire form")
+						teleportTo(Config.CashierCFrame, "Kasir (Hazmat)")
+						firePrompt(specialPrompt)
+						actionCooldowns[specialPrompt] = tick() + 2.5
+						return
+					end					
+
+					logInfo("🌟 SPECIAL EVENT: " .. specialType)
+					teleportToPrompt(specialPrompt)
+					firePrompt(specialPrompt)
+					actionCooldowns[specialPrompt] = tick() + 2.5
+					return
+				end
+
+				-- Stalker aktif tapi belum ada prompt — standby
+				if isStalkerActive then
+					logInfo("⚠️ STALKER ACTIVE — standby kasir")
+					teleportTo(Config.CashierCFrame, "Kasir (Standby Stalker)")
+					return
+				end
+
+				-- ── PRIORITAS 1 — Normal NPC via Step-Aware Engine ──────────────
+				local shutterPP = workspace:FindFirstChild("Misc")
+					and workspace.Misc:FindFirstChild("ShutterButton")
+					and workspace.Misc.ShutterButton:FindFirstChild("PP")
+
+				if #normalNPCs > 0 then
+					-- Buka shutter kalau masih tertutup
+					if shutterPP and shutterPP.ActionText == "Open" then
+						teleportTo(Config.ShutterCFrame, "Shutter")
+						firePrompt(shutterPP)
+						return
+					end
+
+					-- ── STEP-AWARE: cari step aktif via CheckStepHighlight ──────
+					-- CheckStepHighlight dinamis — dicari fresh, bukan cached
+					local activeStep, stepObj = getActiveCheckInStep()
+
+					if activeStep then
+						-- Step kasir aktif, fire promptnya
+						local pp = getStepPP(stepObj)
+						if pp and isReady(pp) then
+							logInfo("-> STEP [" .. activeStep.id .. "] aktif → " .. activeStep.action)
+							actionCooldowns[pp] = tick() + 2.5
+							smartTeleportToCashier("Sebelum " .. activeStep.id)
+							firePrompt(pp)
+							return
+						end
+						-- PP belum ready (cooldown), tunggu sebentar
+						logInfo("-> Step " .. activeStep.id .. " aktif tapi PP cooldown, skip tick ini")
+						return
+					end
+
+					-- ── STEP 6 — NPC highlight aktif, cari talk prompt ──────────
+					local activeNPCName = getActiveStep6NPC()
+					if activeNPCName then
+						local npcsFolder = workspace:FindFirstChild("NPCs")
+						local targetNPC = npcsFolder and npcsFolder:FindFirstChild(activeNPCName)
+						if targetNPC then
+							-- Cari talk prompt langsung dari NPC yang highlight
+							for _, desc in ipairs(targetNPC:GetDescendants()) do
+								if desc:IsA("ProximityPrompt") and desc.Enabled
+									and string.match(string.lower(desc.ActionText or ""), "talk") then
+									if isReady(desc) then
+										logInfo("-> STEP6 [" .. activeNPCName .. "] → Talk")
+										actionCooldowns[desc] = tick() + 2.5
+										smartTeleportToCashier("Sebelum Talk")
+										task.wait(0.2)
+										firePrompt(desc)
+										return
+									end
+								end
+							end
+						end
+					end
+
+					-- ── FALLBACK — tidak ada step aktif, recovery posisi ─────────
+					-- Kemungkinan jeda antar step (gap highlight hilang → highlight baru)
+					-- Tunggu sebentar lalu recovery ke kasir supaya siap step berikutnya
+					local char = LocalPlayer.Character
+					local root = char and char:FindFirstChild("HumanoidRootPart")
+					if root then
+						local dist = (root.Position - Config.CashierCFrame.Position).Magnitude
+						if dist > Config.RecoveryThreshold and hasActivePromptInRadar3() then
+							logInfo("-> Tidak ada step aktif, recovery ke kasir")
+							teleportTo(Config.CashierCFrame, "Kasir (Recovery)")
+						end
+					end
+					return
+				end
+
+				-- ── PRIORITAS 2 — Anomaly ───────────────────────────────────────
+				if #anomalyNPCs > 0 then
+					if shutterPP and shutterPP.ActionText == "Close" then
+						logInfo("-> ANOMALI! Tutup shutter")
+						teleportTo(Config.ShutterCFrame, "Shutter")
+						firePrompt(shutterPP)
+						smartTeleportToCashier("Setelah tutup shutter (anomali)")
+					else
+						local char = LocalPlayer.Character
+						local root = char and char:FindFirstChild("HumanoidRootPart")
+						if root then
+							local dist = (root.Position - Config.CashierCFrame.Position).Magnitude
+							if dist > Config.RecoveryThreshold and hasActivePromptInRadar3() then
+								teleportTo(Config.CashierCFrame, "Kasir (Anomali Recovery)")
+							end
+						end
+					end
+					return
+				end
+
+				-- ── PRIORITAS 3 — Idle, buka shutter kalau ada tamu baru ────────
+				local checkIn1 = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn")
+				local checkIn2 = workspace:FindFirstChild("Misc") and workspace.Misc:FindFirstChild("CheckIn2")
+				local form1 = checkIn1 and checkIn1:FindFirstChild("Form")
+				local form2 = checkIn2 and checkIn2:FindFirstChild("Form")
+
+				if not form1 and not form2 and #normalNPCs == 0 and #anomalyNPCs == 0 then
+					if shutterPP and shutterPP.ActionText == "Open" then
+						logInfo("-> Idle, buka gerbang")
+						teleportTo(Config.ShutterCFrame, "Shutter")
+						firePrompt(shutterPP)
+					end
+				end
+
+			end)
+
+			if not ok then
+				logInfo("⚠️ SYSTEM ERROR: " .. tostring(err))
+			end
+		end
+	end
+end)
+
+-- ==========================================
+-- GUI BUTTONS
+-- ==========================================
+local function setMinimize(state)
+	isMinimized = state
+	ContentFrame.Visible = not state
+	MainFrame.Size = state and UDim2.new(0, 250, 0, 30) or UDim2.new(0, 250, 0, 245)
+	MinimizeBtn.Text = state and "▢" or "—"
+end
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+	setMinimize(not isMinimized)
+end)
+
+if Config.AutoStartEnabled then
+	autoCashierEnabled = true
+	ToggleBtn.Text = "TRUE AI: ON"
+	ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+	logInfo("AUTO START: Kasir aktif.")
+end
+
+if Config.StartMinimized then
+	setMinimize(true)
+end
+
+ToggleBtn.MouseButton1Click:Connect(function()
+	autoCashierEnabled = not autoCashierEnabled
+	if autoCashierEnabled then
+		ToggleBtn.Text = "TRUE AI: ON"
+		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 200, 70)
+		logInfo("SISTEM ON")
+	else
+		ToggleBtn.Text = "TRUE AI: OFF"
+		ToggleBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+		logInfo("SISTEM OFF")
+	end
+end)
+
+RadarBtn.MouseButton1Click:Connect(function()
+	isRadarVisible = not isRadarVisible
+	RadarBtn.Text = isRadarVisible and "SHOW RADAR: ON" or "SHOW RADAR: OFF"
+	RadarBtn.BackgroundColor3 = isRadarVisible and Color3.fromRGB(70, 200, 70) or Color3.fromRGB(70, 70, 70)
+end)
+
+CloseBtn.MouseButton1Click:Connect(function()
+	autoCashierEnabled = false
+	isRadarVisible = false
+	if _G.SmartCashier_Main then _G.SmartCashier_Main:Destroy() end
+	if _G.SmartCashier_Radars then
+		for _, r in pairs(_G.SmartCashier_Radars) do
+			if r then r:Destroy() end
+		end
+	end
+	_G.SmartCashier_ExecutionID = nil
+end)
